@@ -14,6 +14,9 @@ ENV/
 env/
 .conda/
 
+# Nix
+.direnv/
+
 # Distribution / packaging
 .Python
 build/

@@ -3,18 +3,18 @@ import numpy as np
 from .affine import Affine
 from typing import Any, Optional, Union, List, Tuple, TYPE_CHECKING
 from .utils import get_orientation_from_direction_cosines
-from mimage.backends.torch_backend import TorchBackend
-from mimage.backends.numpy_backend import NumpyBackend
+from mimage.backends.tensor.tensor_torch import TensorTorchBackend
+from mimage.backends.tensor.tensor_numpy import TensorNumpyBackend
 
 # optional dependency
 if TYPE_CHECKING:
-    import torch  
+    import torch
 
 ArrayLike = Union["torch.Tensor", np.ndarray, List[float], Tuple[float, ...]]
 
 _BACKEND_MAP = {
-    TorchBackend.name: TorchBackend, # torch
-    NumpyBackend.name: NumpyBackend, # numpy
+    TensorTorchBackend.name: TensorTorchBackend, # torch
+    TensorNumpyBackend.name: TensorNumpyBackend, # numpy
 }
 
 class Mimage:
@@ -461,3 +461,8 @@ class Mimage:
     @property
     def shape(self) -> Tuple[int, ...]:
         return self.data.shape
+    
+    @property
+    def shape_spatial(self) -> Tuple[int, int, int]:
+        """Returns the shape of the spatial dimensions only, in sorted order."""
+        return tuple(self.data.shape[dim] for dim in self.spatial_dims)

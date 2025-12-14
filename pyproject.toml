@@ -1,21 +1,114 @@
 [project]
-name = "test"
+name = "mimage"
 version = "0.1.0"
-description = "Add your description here"
+description = "Medical image processing library with optimized Cython resampling"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.8"
 dependencies = [
-    "edt>=3.0.0",
+    "numpy>=1.20.0",
+    "cython>=3.0.0",
+]
+authors = [
+    {name = "Johannes", email = "your.email@example.com"}
+]
+license = {text = "MIT"}
+keywords = ["medical imaging", "resampling", "interpolation", "cython"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+
+[project.optional-dependencies]
+torch = ["torch>=1.9.0"]
+nibabel = ["nibabel>=3.0.0"]
+viz = ["matplotlib>=3.0.0", "scikit-image>=0.18.0"]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=3.0.0",
+    "black>=22.0.0",
+    "mypy>=0.950",
+]
+all = [
+    "torch>=1.9.0",
+    "nibabel>=3.0.0",
+    "matplotlib>=3.0.0",
+    "scikit-image>=0.18.0",
     "ipywidgets>=8.1.7",
     "monai>=1.5.1",
     "numba>=0.62.1",
-    "numpy>=2.3.3",
     "opencv-python>=4.11.0.86",
     "pandas>=2.3.2",
-    "scikit-image>=0.25.2",
-    "torch>=2.8.0",
     "torchio[plot]>=0.20.22",
 ]
+
+[build-system]
+requires = [
+    "setuptools>=45",
+    "wheel",
+    "Cython>=3.0.0",
+    "numpy>=1.20.0",
+]
+build-backend = "setuptools.build_meta"
+
+[tool.cibuildwheel]
+# Build for multiple Python versions
+build = ["cp38-*", "cp39-*", "cp310-*", "cp311-*", "cp312-*", "cp313-*"]
+
+# Skip PyPy, musllinux (for simplicity), and 32-bit builds
+skip = ["pp*", "*-musllinux*", "*-win32", "*-manylinux_i686"]
+
+# Build for multiple architectures
+# x86_64 on Linux, macOS, Windows
+# ARM64 (aarch64) on Linux
+archs = ["auto"]
+
+# Environment variables for the build
+environment = {CYTHON_NTHREADS = "4"}
+
+# Test the built wheels
+test-requires = ["pytest", "numpy"]
+test-command = "pytest {project}/tests -v"
+test-skip = ["*-macosx_arm64", "*-macosx_universal2:arm64"]  # Skip tests on emulated ARM
+
+# Platform-specific settings
+[tool.cibuildwheel.linux]
+# Use manylinux2014 for broader compatibility
+manylinux-x86_64-image = "manylinux2014"
+manylinux-aarch64-image = "manylinux2014"
+
+# Repair wheel to include shared libraries
+repair-wheel-command = "auditwheel repair -w {dest_dir} {wheel}"
+
+# Build ARM wheels using QEMU emulation
+before-all = [
+    "yum install -y gcc gcc-c++ || apt-get update && apt-get install -y gcc g++",
+]
+
+[tool.cibuildwheel.macos]
+# Build universal2 wheels on macOS (x86_64 + ARM64)
+archs = ["x86_64", "arm64", "universal2"]
+
+# Repair wheel for macOS
+repair-wheel-command = "delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}"
+
+before-all = [
+    "brew install libomp || true",  # OpenMP support on macOS
+]
+
+[tool.cibuildwheel.windows]
+# Build for 64-bit Windows
+archs = ["AMD64"]
+
+# Note: OpenMP may require special handling on Windows
+# You might need to skip OpenMP or use different flags
 
 [[tool.uv.index]]
 name = "pytorch-cu126"
@@ -32,14 +125,13 @@ torchvision = [
 
 [dependency-groups]
 dev = [
+    "cibuildwheel>=3.2.1",
     "ipykernel>=6.30.1",
 ]
 
 [tool.setuptools.packages.find]
 where = ["src"]  
-include = ["miviz*", "mimage*"]  
-# exclude = ["my_package.tests*"]  # exclude packages matching these glob patterns (empty by default)
-# namespaces = false  # to disable scanning PEP 420 namespaces (true by default)
+include = ["miviz*", "mimage*"]
 
 [tool.pytest.ini_options]
 filterwarnings = [
@@ -47,3 +139,8 @@ filterwarnings = [
     "ignore:builtin type SwigPyObject has no __module__ attribute:DeprecationWarning",
     "ignore:builtin type swigvarlink has no __module__ attribute:DeprecationWarning",
 ]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
