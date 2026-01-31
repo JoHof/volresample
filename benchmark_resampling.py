@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Benchmark script comparing Cython and PyTorch resampling implementations."""
+"""Benchmark script comparing volresample (Cython) and PyTorch implementations."""
 
 import numpy as np
 import time
@@ -12,11 +12,12 @@ import torch
 # Benchmark configuration
 N_WARMUP_ITERATIONS = 1
 
-# Add src to path
+# Add src and tests to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'tests'))
 
-from mimage.backends.resampling.resampling_torch import ResamplingTorchBackend
-from mimage.backends.resampling.resampling_cython_wrapper import ResamplingCythonBackend
+import volresample
+from torch_reference import TorchReference
 
 
 def generate_test_data(shape: Tuple[int, ...], seed: int = 42, dtype: type = np.float32) -> np.ndarray:
@@ -35,7 +36,8 @@ def generate_test_data(shape: Tuple[int, ...], seed: int = 42, dtype: type = np.
 
 
 def benchmark_implementation(
-    backend: Any,
+    backend_name: str,
+    resample_func,
     data: np.ndarray,
     size: Tuple[int, int, int],
     mode: str,
@@ -46,33 +48,36 @@ def benchmark_implementation(
     """Benchmark a resampling implementation with repeated execution.
     
     Args:
-        backend: Backend class with resample method
+        backend_name: Name of backend ('volresample' or 'torch')
+        resample_func: Resample function to call
         data: Input data
         size: Target size
         mode: Interpolation mode ('nearest', 'linear', or 'area')
-        n_warmup: Number of warmup iterations (default from global config)
-        n_iterations: Number of timed iterations (default from global config)
+        n_warmup: Number of warmup iterations
+        n_iterations: Number of timed iterations
+        parallel_threads: Number of threads for volresample
         
     Returns:
         Tuple of (mean_time_ms, std_time_ms, output_array)
     """
-    if backend.__name__ == "ResamplingTorchBackend":
+    if backend_name == "torch":
         torch.set_num_threads(max(parallel_threads, 1))
+    
     # Warmup
     for _ in range(n_warmup):
-        if backend.__name__ == "ResamplingTorchBackend":
-            result = backend.resample(data, size, mode=mode)
+        if backend_name == "torch":
+            result = resample_func(data, size, mode=mode)
         else:
-            result = backend.resample(data, size, mode=mode, parallel_threads=parallel_threads)
+            result = resample_func(data, size, mode=mode, parallel_threads=parallel_threads)
     
     # Benchmark
     times = []
     for _ in range(n_iterations):
         start = time.perf_counter()
-        if backend.__name__ == "ResamplingTorchBackend":
-            result = backend.resample(data, size, mode=mode)
+        if backend_name == "torch":
+            result = resample_func(data, size, mode=mode)
         else:
-            result = backend.resample(data, size, mode=mode, parallel_threads=parallel_threads)
+            result = resample_func(data, size, mode=mode, parallel_threads=parallel_threads)
         end = time.perf_counter()
         times.append((end - start) * 1000)  # Convert to ms
 
@@ -118,7 +123,8 @@ def analyze_differences(torch_result: np.ndarray, cython_result: np.ndarray) -> 
 
 
 def benchmark_grid_sample(
-    backend: Any,
+    backend_name: str,
+    grid_sample_func,
     input_data: np.ndarray,
     grid: np.ndarray,
     mode: str,
@@ -130,36 +136,37 @@ def benchmark_grid_sample(
     """Benchmark a grid_sample implementation with repeated execution.
     
     Args:
-        backend: Backend class with grid_sample method
+        backend_name: Name of backend ('volresample' or 'torch')
+        grid_sample_func: Grid sample function to call
         input_data: Input data (N, C, D, H, W)
         grid: Grid for sampling (N, D_out, H_out, W_out, 3)
         mode: Interpolation mode ('bilinear' or 'nearest')
         padding_mode: Padding mode ('zeros', 'border', 'reflection')
         n_warmup: Number of warmup iterations
         n_iterations: Number of timed iterations
-        parallel_threads: Number of threads for parallel backends
+        parallel_threads: Number of threads for volresample
         
     Returns:
         Tuple of (mean_time_ms, std_time_ms, output_array)
     """
-    if backend.__name__ == "ResamplingTorchBackend":
+    if backend_name == "torch":
         torch.set_num_threads(max(parallel_threads, 1))
     
     # Warmup
     for _ in range(n_warmup):
-        if backend.__name__ == "ResamplingTorchBackend":
-            result = backend.grid_sample(input_data, grid, mode=mode, padding_mode=padding_mode)
+        if backend_name == "torch":
+            result = grid_sample_func(input_data, grid, mode=mode, padding_mode=padding_mode)
         else:
-            result = backend.grid_sample(input_data, grid, mode=mode, padding_mode=padding_mode, parallel_threads=parallel_threads)
+            result = grid_sample_func(input_data, grid, mode=mode, padding_mode=padding_mode, parallel_threads=parallel_threads)
     
     # Benchmark
     times = []
     for _ in range(n_iterations):
         start = time.perf_counter()
-        if backend.__name__ == "ResamplingTorchBackend":
-            result = backend.grid_sample(input_data, grid, mode=mode, padding_mode=padding_mode)
+        if backend_name == "torch":
+            result = grid_sample_func(input_data, grid, mode=mode, padding_mode=padding_mode)
         else:
-            result = backend.grid_sample(input_data, grid, mode=mode, padding_mode=padding_mode, parallel_threads=parallel_threads)
+            result = grid_sample_func(input_data, grid, mode=mode, padding_mode=padding_mode, parallel_threads=parallel_threads)
         end = time.perf_counter()
         times.append((end - start) * 1000)  # Convert to ms
 
@@ -201,11 +208,11 @@ def run_benchmark(
     # Generate test data
     data = generate_test_data(input_shape, dtype=dtype)
     
-    # Benchmark Cython
-    print("[Cython] ", end=" ")
+    # Benchmark volresample
+    print("[volresample]", end=" ")
     try:
         cython_mean, cython_std, cython_result = benchmark_implementation(
-            ResamplingCythonBackend, data, output_size, mode, n_iterations=n_iterations, parallel_threads=parallel_threads
+            "volresample", volresample.resample, data, output_size, mode, n_iterations=n_iterations, parallel_threads=parallel_threads
         )
         print(f"{cython_mean:.2f} ms (±{cython_std:.2f} ms)")
     except Exception as e:
@@ -215,10 +222,10 @@ def run_benchmark(
     time.sleep(0.1)  # Small delay to avoid any interference
 
     # Benchmark PyTorch
-    print("\n[PyTorch]", end=" ")
+    print("\n[PyTorch]   ", end=" ")
     try:
         torch_mean, torch_std, torch_result = benchmark_implementation(
-            ResamplingTorchBackend, data, output_size, mode, n_iterations=n_iterations, parallel_threads=parallel_threads
+            "torch", TorchReference.resample, data, output_size, mode, n_iterations=n_iterations, parallel_threads=parallel_threads
         )
         print(f"{torch_mean:.2f} ms (±{torch_std:.2f} ms)")
     except Exception as e:
@@ -300,11 +307,11 @@ def run_grid_sample_benchmark(
     input_data = rng.randn(*input_shape).astype(np.float32)
     grid = rng.uniform(-1, 1, output_shape).astype(np.float32)
     
-    # Benchmark Cython
-    print("[Cython] ", end=" ")
+    # Benchmark volresample
+    print("[volresample]", end=" ")
     try:
         cython_mean, cython_std, cython_result = benchmark_grid_sample(
-            ResamplingCythonBackend, input_data, grid, mode, padding_mode, n_iterations=n_iterations, parallel_threads=parallel_threads
+            "volresample", volresample.grid_sample, input_data, grid, mode, padding_mode, n_iterations=n_iterations, parallel_threads=parallel_threads
         )
         print(f"{cython_mean:.2f} ms (±{cython_std:.2f} ms)")
     except Exception as e:
@@ -314,10 +321,10 @@ def run_grid_sample_benchmark(
     time.sleep(0.1)
 
     # Benchmark PyTorch
-    print("\n[PyTorch]", end=" ")
+    print("\n[PyTorch]   ", end=" ")
     try:
         torch_mean, torch_std, torch_result = benchmark_grid_sample(
-            ResamplingTorchBackend, input_data, grid, mode, padding_mode, n_iterations=n_iterations, parallel_threads=parallel_threads
+            "torch", TorchReference.grid_sample, input_data, grid, mode, padding_mode, n_iterations=n_iterations, parallel_threads=parallel_threads
         )
         print(f"{torch_mean:.2f} ms (±{torch_std:.2f} ms)")
     except Exception as e:
@@ -370,8 +377,8 @@ def main():
     
     """Run benchmark suite."""
     print("\n" + "="*80)
-    print("RESAMPLING BENCHMARK")
-    print("Comparing PyTorch vs Cython implementations")
+    print("VOLUME RESAMPLING BENCHMARK")
+    print("Comparing volresample (Cython) vs PyTorch implementations")
     print("="*80)
     
     # Show benchmark configuration
@@ -381,15 +388,15 @@ def main():
     
     # Check availability
     print("\n[Backend Availability]")
-    print(f"  PyTorch: {ResamplingTorchBackend.available}")
-    print(f"  Cython:  {ResamplingCythonBackend.available}")
+    print(f"  PyTorch: {TorchReference.available}")
+    print(f"  volresample: {volresample.resample is not None}")
     
-    if not ResamplingTorchBackend.available:
-        print("\nERROR: PyTorch backend not available!")
+    if not TorchReference.available:
+        print("\nERROR: PyTorch not available!")
         return
     
-    if not ResamplingCythonBackend.available:
-        print("\nERROR: Cython backend not available!")
+    if volresample.resample is None:
+        print("\nERROR: volresample not available! Build with 'pip install -e .'")
         return
     
     # Define reduced test cases
@@ -448,7 +455,7 @@ def main():
     print("\n" + "="*120)
     print("RESAMPLE SUMMARY")
     print("="*120)
-    print(f"{'Test Name':<30} {'Mode':<8} {'PyTorch (ms)':<18} {'Cython (ms)':<18} {'Speedup':<10} {'Status':<8}")
+    print(f"{'Test Name':<30} {'Mode':<8} {'PyTorch (ms)':<18} {'volresample (ms)':<18} {'Speedup':<10} {'Status':<8}")
     print("-"*120)
     
     for r in results:
@@ -463,7 +470,7 @@ def main():
         print("\n" + "="*120)
         print("GRID SAMPLE SUMMARY")
         print("="*120)
-        print(f"{'Test Name':<30} {'Mode':<10} {'Padding':<10} {'PyTorch (ms)':<18} {'Cython (ms)':<18} {'Speedup':<10} {'Status':<8}")
+        print(f"{'Test Name':<30} {'Mode':<10} {'Padding':<10} {'PyTorch (ms)':<18} {'volresample (ms)':<18} {'Speedup':<10} {'Status':<8}")
         print("-"*120)
         
         for r in grid_results:

@@ -1,17 +1,9 @@
 #!/usr/bin/env python3
 """
-Setup script for mimage package with Cython extensions.
+Setup script for volresample package with Cython extensions.
 
-This setup.py is designed to work with cibuildwheel for building wheels
-across different platforms and architectures (x86_64, ARM, etc.).
-
-The Cython extensions are built with architecture-appropriate optimizations:
-- x86_64: Generic, AVX2, and AVX512 versions
-- ARM: Generic and ARM-optimized versions
-- Other: Generic fallback
-
-cibuildwheel will automatically call this setup.py on each target platform,
-and the build will adapt to the native architecture.
+This setup.py builds optimized Cython extensions for 3D volume resampling
+with OpenMP parallelization and architecture-specific optimizations.
 """
 
 from setuptools import setup, Extension, find_packages
@@ -37,7 +29,7 @@ class BuildExtWithArchDetection(build_ext):
         """Run the build with architecture detection info."""
         machine = platform.machine().lower()
         print(f"\n{'='*70}")
-        print(f"Building Cython extensions for: {machine}")
+        print(f"Building volresample Cython extensions for: {machine}")
         print(f"Python: {sys.version}")
         print(f"NumPy: {np.__version__}")
         print(f"{'='*70}\n")
@@ -48,14 +40,6 @@ class BuildExtWithArchDetection(build_ext):
 def get_cython_extensions():
     """
     Create Cython extension modules with architecture-appropriate flags.
-    
-    When cibuildwheel builds wheels:
-    - On x86_64 runners: builds generic + AVX2 + AVX512 versions
-    - On ARM runners: builds generic + ARM-optimized versions
-    - On other platforms: builds generic version only
-    
-    Returns:
-        list: List of Extension objects to compile
     """
     if not CYTHON_AVAILABLE:
         return []
@@ -76,8 +60,8 @@ def get_cython_extensions():
     
     extensions = []
     
-    # Source file for resampling backend
-    resampling_source = "src/mimage/backends/resampling/resampling_cython.pyx"
+    # Source file for resampling
+    resampling_source = "src/volresample/_resample.pyx"
     
     # Common settings
     include_dirs = [np.get_include()]
@@ -92,7 +76,6 @@ def get_cython_extensions():
         openmp_link = []
     else:
         # Linux/macOS with GCC/Clang
-        # AVX2 flags for vectorization - most modern x86_64 CPUs support this
         avx_flags = []
         if is_x86:
             avx_flags = [
@@ -112,10 +95,10 @@ def get_cython_extensions():
     if is_x86:
         print(f"  AVX2/FMA optimizations: ENABLED")
     
-    # Only build the generic version to avoid cythonize error
-    print("  - Adding generic version (portable)")
+    # Build the volresample extension
+    print("  - Building volresample._resample")
     extensions.append(Extension(
-        name="mimage.backends.resampling.resampling_cython",
+        name="volresample._resample",
         sources=[resampling_source],
         include_dirs=include_dirs,
         extra_compile_args=extra_compile_args_base + openmp_compile,
@@ -132,7 +115,7 @@ def get_long_description():
         with open('README.md', 'r', encoding='utf-8') as f:
             return f.read()
     except FileNotFoundError:
-        return "Medical image processing library with optimized resampling"
+        return "Fast 3D volume resampling with optimized Cython"
 
 
 # Read version from package
@@ -176,31 +159,24 @@ def main():
         ext_modules = []
     
     setup(
-        name="mimage",
+        name="volresample",
         version=get_version(),
-        description="Medical image processing library with optimized resampling",
+        description="Fast 3D volume resampling with optimized Cython",
         long_description=get_long_description(),
         long_description_content_type="text/markdown",
         author="Johannes",
-        author_email="your.email@example.com",  # Update this
-        url="https://github.com/yourusername/mimage",  # Update this
+        author_email="j.hofmanninger@gmail.com",
+        url="https://github.com/yourusername/volresample",
         packages=find_packages(where="src"),
         package_dir={"": "src"},
         ext_modules=ext_modules,
         install_requires=[
             'numpy>=1.20.0',
-            'cython>=3.0.0',
         ],
         extras_require={
-            'torch': ['torch>=1.9.0'],
-            'nibabel': ['nibabel>=3.0.0'],
-            'viz': ['matplotlib>=3.0.0', 'scikit-image>=0.18.0'],
             'dev': [
                 'pytest>=7.0.0',
-                'pytest-cov>=3.0.0',
-                'black>=22.0.0',
-                'mypy>=0.950',
-                'cibuildwheel>=2.12.0',
+                'torch>=1.9.0',
             ],
         },
         python_requires='>=3.8',

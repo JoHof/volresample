@@ -1,20 +1,22 @@
 [project]
-name = "mimage"
+name = "volresample"
 version = "0.1.0"
-description = "Medical image processing library with optimized Cython resampling"
+description = "Fast 3D volume resampling with optimized Cython"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.8"
 dependencies = [
     "numpy>=1.20.0",
 ]
 authors = [
     {name = "Johannes", email = "j.hofmanninger@gmail.com"}
 ]
-license = "MIT"
-keywords = ["medical imaging", "resampling", "interpolation"]
+license = {text = "MIT"}
+keywords = ["volume", "resampling", "interpolation", "3d", "medical imaging", "cython"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
@@ -22,25 +24,20 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Cython",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/volresample"
+Repository = "https://github.com/yourusername/volresample"
 
 [project.optional-dependencies]
-# torch = ["torch>=1.9.0"]
-# nibabel = ["nibabel>=3.0.0"]
-# viz = ["matplotlib>=3.0.0", "scikit-image>=0.18.0"]
 dev = [
-
+    "pytest>=7.0.0",
+    "torch>=1.9.0",
 ]
-# all = [
-#     # "torch>=1.9.0",
-#     # "nibabel>=3.0.0",
-#     # "matplotlib>=3.0.0",
-#     # "scikit-image>=0.18.0",
-#     # "monai>=1.5.1",
-#     # "opencv-python>=4.11.0.86",
-#     # "pandas>=2.3.2",
-#     # "torchio[plot]>=0.20.22",
-# ]
 
 [build-system]
 requires = [
@@ -130,7 +127,7 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["src"]  
-include = ["miviz*", "mimage*"]
+include = ["volresample*"]
 
 [tool.pytest.ini_options]
 filterwarnings = [

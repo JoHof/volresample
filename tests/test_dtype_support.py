@@ -6,7 +6,7 @@ and float32 conversion for linear/area modes.
 
 import numpy as np
 import pytest
-from mimage.backends.resampling import ResamplingCythonBackend
+import volresample
 
 
 class TestDtypeSupport3D:
@@ -15,7 +15,7 @@ class TestDtypeSupport3D:
     def test_nearest_uint8_preserves_dtype(self):
         """Nearest neighbor should preserve uint8 dtype."""
         data = np.array([[[1, 200], [50, 255]]], dtype=np.uint8)
-        result = ResamplingCythonBackend.resample(data, (2, 2, 2), mode="nearest")
+        result = volresample.resample(data, (2, 2, 2), mode="nearest")
         
         assert result.dtype == np.uint8
         assert result.shape == (2, 2, 2)
@@ -25,7 +25,7 @@ class TestDtypeSupport3D:
     def test_nearest_int16_preserves_dtype(self):
         """Nearest neighbor should preserve int16 dtype."""
         data = np.array([[[-1000, 500], [100, -32768]]], dtype=np.int16)
-        result = ResamplingCythonBackend.resample(data, (2, 2, 2), mode="nearest")
+        result = volresample.resample(data, (2, 2, 2), mode="nearest")
         
         assert result.dtype == np.int16
         assert result.shape == (2, 2, 2)
@@ -33,7 +33,7 @@ class TestDtypeSupport3D:
     def test_nearest_float32_preserves_dtype(self):
         """Nearest neighbor should preserve float32 dtype."""
         data = np.array([[[1.5, 2.5], [3.5, 4.5]]], dtype=np.float32)
-        result = ResamplingCythonBackend.resample(data, (2, 2, 2), mode="nearest")
+        result = volresample.resample(data, (2, 2, 2), mode="nearest")
         
         assert result.dtype == np.float32
         assert result.shape == (2, 2, 2)
@@ -41,7 +41,7 @@ class TestDtypeSupport3D:
     def test_linear_uint8_converts_to_float32(self):
         """Linear mode should convert uint8 to float32."""
         data = np.array([[[100, 200], [50, 150]]], dtype=np.uint8)
-        result = ResamplingCythonBackend.resample(data, (2, 2, 2), mode="linear")
+        result = volresample.resample(data, (2, 2, 2), mode="linear")
         
         assert result.dtype == np.float32
         assert result.shape == (2, 2, 2)
@@ -49,7 +49,7 @@ class TestDtypeSupport3D:
     def test_linear_int16_converts_to_float32(self):
         """Linear mode should convert int16 to float32."""
         data = np.array([[[1000, -500], [100, 2000]]], dtype=np.int16)
-        result = ResamplingCythonBackend.resample(data, (2, 2, 2), mode="linear")
+        result = volresample.resample(data, (2, 2, 2), mode="linear")
         
         assert result.dtype == np.float32
         assert result.shape == (2, 2, 2)
@@ -57,7 +57,7 @@ class TestDtypeSupport3D:
     def test_area_uint8_converts_to_float32(self):
         """Area mode should convert uint8 to float32."""
         data = np.ones((2, 4, 4), dtype=np.uint8) * 100
-        result = ResamplingCythonBackend.resample(data, (2, 2, 2), mode="area")
+        result = volresample.resample(data, (2, 2, 2), mode="area")
         
         assert result.dtype == np.float32
         assert result.shape == (2, 2, 2)
@@ -66,7 +66,7 @@ class TestDtypeSupport3D:
         """Verify nearest neighbor correctly samples uint8 values."""
         # Create simple pattern
         data = np.array([[[10, 20], [30, 40]]], dtype=np.uint8)
-        result = ResamplingCythonBackend.resample(data, (2, 2, 2), mode="nearest")
+        result = volresample.resample(data, (2, 2, 2), mode="nearest")
         
         assert result.dtype == np.uint8
         # Verify values are from original data
@@ -76,7 +76,7 @@ class TestDtypeSupport3D:
     def test_nearest_int16_negative_values(self):
         """Nearest neighbor should handle negative int16 values correctly."""
         data = np.array([[[-100, -200], [300, -400]]], dtype=np.int16)
-        result = ResamplingCythonBackend.resample(data, (3, 3, 3), mode="nearest")
+        result = volresample.resample(data, (3, 3, 3), mode="nearest")
         
         assert result.dtype == np.int16
         # All values should be from original data
@@ -86,7 +86,7 @@ class TestDtypeSupport3D:
     def test_nearest_uint8_boundary_values(self):
         """Test uint8 boundary values (0 and 255)."""
         data = np.array([[[0, 255], [128, 64]]], dtype=np.uint8)
-        result = ResamplingCythonBackend.resample(data, (2, 2, 2), mode="nearest")
+        result = volresample.resample(data, (2, 2, 2), mode="nearest")
         
         assert result.dtype == np.uint8
         assert 0 in result or 255 in result or 128 in result or 64 in result
@@ -94,7 +94,7 @@ class TestDtypeSupport3D:
     def test_nearest_int16_boundary_values(self):
         """Test int16 boundary values."""
         data = np.array([[[-32768, 32767], [0, 1000]]], dtype=np.int16)
-        result = ResamplingCythonBackend.resample(data, (2, 2, 2), mode="nearest")
+        result = volresample.resample(data, (2, 2, 2), mode="nearest")
         
         assert result.dtype == np.int16
         # Values should be preserved from input
@@ -104,7 +104,7 @@ class TestDtypeSupport3D:
     def test_upsampling_uint8(self):
         """Test upsampling with uint8."""
         data = np.array([[[100, 200]]], dtype=np.uint8)
-        result = ResamplingCythonBackend.resample(data, (2, 4, 4), mode="nearest")
+        result = volresample.resample(data, (2, 4, 4), mode="nearest")
         
         assert result.dtype == np.uint8
         assert result.shape == (2, 4, 4)
@@ -113,7 +113,7 @@ class TestDtypeSupport3D:
     def test_downsampling_int16(self):
         """Test downsampling with int16."""
         data = np.ones((2, 8, 8), dtype=np.int16) * 500
-        result = ResamplingCythonBackend.resample(data, (2, 2, 2), mode="nearest")
+        result = volresample.resample(data, (2, 2, 2), mode="nearest")
         
         assert result.dtype == np.int16
         assert result.shape == (2, 2, 2)
@@ -122,7 +122,7 @@ class TestDtypeSupport3D:
     def test_large_uint8_array(self):
         """Test large uint8 array."""
         data = np.random.randint(0, 256, (4, 32, 32), dtype=np.uint8)
-        result = ResamplingCythonBackend.resample(data, (8, 64, 64), mode="nearest")
+        result = volresample.resample(data, (8, 64, 64), mode="nearest")
         
         assert result.dtype == np.uint8
         assert result.shape == (8, 64, 64)
@@ -130,7 +130,7 @@ class TestDtypeSupport3D:
     def test_large_int16_array(self):
         """Test large int16 array."""
         data = np.random.randint(-32768, 32767, (4, 32, 32), dtype=np.int16)
-        result = ResamplingCythonBackend.resample(data, (8, 64, 64), mode="nearest")
+        result = volresample.resample(data, (8, 64, 64), mode="nearest")
         
         assert result.dtype == np.int16
         assert result.shape == (8, 64, 64)
@@ -142,7 +142,7 @@ class TestDtypeSupport4D:
     def test_4d_nearest_uint8_preserves_dtype(self):
         """4D nearest neighbor should preserve uint8 dtype."""
         data = np.ones((2, 2, 2, 2), dtype=np.uint8) * 150
-        result = ResamplingCythonBackend.resample(data, (3, 3, 3), mode="nearest")
+        result = volresample.resample(data, (3, 3, 3), mode="nearest")
         
         assert result.dtype == np.uint8
         assert result.shape == (2, 3, 3, 3)
@@ -151,7 +151,7 @@ class TestDtypeSupport4D:
     def test_4d_nearest_int16_preserves_dtype(self):
         """4D nearest neighbor should preserve int16 dtype."""
         data = np.ones((3, 2, 2, 2), dtype=np.int16) * -1000
-        result = ResamplingCythonBackend.resample(data, (3, 3, 3), mode="nearest")
+        result = volresample.resample(data, (3, 3, 3), mode="nearest")
         
         assert result.dtype == np.int16
         assert result.shape == (3, 3, 3, 3)
@@ -160,7 +160,7 @@ class TestDtypeSupport4D:
     def test_4d_nearest_float32_preserves_dtype(self):
         """4D nearest neighbor should preserve float32 dtype."""
         data = np.ones((2, 2, 2, 2), dtype=np.float32) * 3.14
-        result = ResamplingCythonBackend.resample(data, (3, 3, 3), mode="nearest")
+        result = volresample.resample(data, (3, 3, 3), mode="nearest")
         
         assert result.dtype == np.float32
         assert result.shape == (2, 3, 3, 3)
@@ -168,7 +168,7 @@ class TestDtypeSupport4D:
     def test_4d_linear_uint8_converts_to_float32(self):
         """4D linear mode should convert uint8 to float32."""
         data = np.ones((2, 2, 2, 2), dtype=np.uint8) * 100
-        result = ResamplingCythonBackend.resample(data, (3, 3, 3), mode="linear")
+        result = volresample.resample(data, (3, 3, 3), mode="linear")
         
         assert result.dtype == np.float32
         assert result.shape == (2, 3, 3, 3)
@@ -176,7 +176,7 @@ class TestDtypeSupport4D:
     def test_4d_linear_int16_converts_to_float32(self):
         """4D linear mode should convert int16 to float32."""
         data = np.ones((2, 2, 2, 2), dtype=np.int16) * 500
-        result = ResamplingCythonBackend.resample(data, (3, 3, 3), mode="linear")
+        result = volresample.resample(data, (3, 3, 3), mode="linear")
         
         assert result.dtype == np.float32
         assert result.shape == (2, 3, 3, 3)
@@ -188,7 +188,7 @@ class TestDtypeSupport4D:
         for c in range(4):
             data[c] = c * 50
         
-        result = ResamplingCythonBackend.resample(data, (3, 3, 3), mode="nearest")
+        result = volresample.resample(data, (3, 3, 3), mode="nearest")
         
         assert result.dtype == np.uint8
         assert result.shape == (4, 3, 3, 3)
@@ -202,7 +202,7 @@ class TestDtypeSupport4D:
         for c in range(3):
             data[c] = (c - 1) * 1000  # -1000, 0, 1000
         
-        result = ResamplingCythonBackend.resample(data, (4, 4, 4), mode="nearest")
+        result = volresample.resample(data, (4, 4, 4), mode="nearest")
         
         assert result.dtype == np.int16
         assert result.shape == (3, 4, 4, 4)
@@ -212,7 +212,7 @@ class TestDtypeSupport4D:
     def test_4d_area_uint8_converts_to_float32(self):
         """4D area mode should convert uint8 to float32."""
         data = np.ones((2, 4, 4, 4), dtype=np.uint8) * 100
-        result = ResamplingCythonBackend.resample(data, (2, 2, 2), mode="area")
+        result = volresample.resample(data, (2, 2, 2), mode="area")
         
         assert result.dtype == np.float32
         assert result.shape == (2, 2, 2, 2)
@@ -224,7 +224,7 @@ class TestDtypeEdgeCases:
     def test_constant_value_uint8(self):
         """Constant value array with uint8."""
         data = np.full((2, 4, 4), 42, dtype=np.uint8)
-        result = ResamplingCythonBackend.resample(data, (3, 5, 5), mode="nearest")
+        result = volresample.resample(data, (3, 5, 5), mode="nearest")
         
         assert result.dtype == np.uint8
         assert np.all(result == 42)
@@ -232,7 +232,7 @@ class TestDtypeEdgeCases:
     def test_constant_value_int16(self):
         """Constant value array with int16."""
         data = np.full((2, 4, 4), -999, dtype=np.int16)
-        result = ResamplingCythonBackend.resample(data, (3, 5, 5), mode="nearest")
+        result = volresample.resample(data, (3, 5, 5), mode="nearest")
         
         assert result.dtype == np.int16
         assert np.all(result == -999)
@@ -240,7 +240,7 @@ class TestDtypeEdgeCases:
     def test_asymmetric_scaling_uint8(self):
         """Test asymmetric output sizes with uint8."""
         data = np.random.randint(0, 256, (3, 5, 5), dtype=np.uint8)
-        result = ResamplingCythonBackend.resample(data, (4, 7, 6), mode="nearest")
+        result = volresample.resample(data, (4, 7, 6), mode="nearest")
         
         assert result.dtype == np.uint8
         assert result.shape == (4, 7, 6)
@@ -248,7 +248,7 @@ class TestDtypeEdgeCases:
     def test_asymmetric_scaling_int16(self):
         """Test asymmetric output sizes with int16."""
         data = np.random.randint(-32768, 32767, (3, 5, 5), dtype=np.int16)
-        result = ResamplingCythonBackend.resample(data, (4, 7, 6), mode="nearest")
+        result = volresample.resample(data, (4, 7, 6), mode="nearest")
         
         assert result.dtype == np.int16
         assert result.shape == (4, 7, 6)
@@ -256,7 +256,7 @@ class TestDtypeEdgeCases:
     def test_single_element_upsampling_uint8(self):
         """Upsample single element with uint8."""
         data = np.array([[[200]]], dtype=np.uint8)
-        result = ResamplingCythonBackend.resample(data, (3, 5, 5), mode="nearest")
+        result = volresample.resample(data, (3, 5, 5), mode="nearest")
         
         assert result.dtype == np.uint8
         assert result.shape == (3, 5, 5)
@@ -265,7 +265,7 @@ class TestDtypeEdgeCases:
     def test_single_element_upsampling_int16(self):
         """Upsample single element with int16."""
         data = np.array([[[-5000]]], dtype=np.int16)
-        result = ResamplingCythonBackend.resample(data, (3, 5, 5), mode="nearest")
+        result = volresample.resample(data, (3, 5, 5), mode="nearest")
         
         assert result.dtype == np.int16
         assert result.shape == (3, 5, 5)
@@ -274,7 +274,7 @@ class TestDtypeEdgeCases:
     def test_uint8_with_zeros(self):
         """Test uint8 array with zero values."""
         data = np.array([[[0, 0], [0, 0]]], dtype=np.uint8)
-        result = ResamplingCythonBackend.resample(data, (2, 2, 2), mode="nearest")
+        result = volresample.resample(data, (2, 2, 2), mode="nearest")
         
         assert result.dtype == np.uint8
         assert np.all(result == 0)
@@ -282,7 +282,7 @@ class TestDtypeEdgeCases:
     def test_int16_with_zeros(self):
         """Test int16 array with zero values."""
         data = np.array([[[0, 0], [0, 0]]], dtype=np.int16)
-        result = ResamplingCythonBackend.resample(data, (2, 2, 2), mode="nearest")
+        result = volresample.resample(data, (2, 2, 2), mode="nearest")
         
         assert result.dtype == np.int16
         assert np.all(result == 0)
@@ -291,7 +291,7 @@ class TestDtypeEdgeCases:
         """Test uint8 with all different values."""
         # Use pattern that ensures different values
         data = np.arange(64, dtype=np.uint8).reshape(4, 4, 4)
-        result = ResamplingCythonBackend.resample(data, (8, 8, 8), mode="nearest")
+        result = volresample.resample(data, (8, 8, 8), mode="nearest")
         
         assert result.dtype == np.uint8
         assert result.shape == (8, 8, 8)
@@ -308,7 +308,7 @@ class TestDtypeConsistency:
         
         # Test different output sizes
         for out_size in [(3, 5, 5), (10, 10, 10), (1, 20, 20)]:
-            result = ResamplingCythonBackend.resample(base_data, out_size, mode="nearest")
+            result = volresample.resample(base_data, out_size, mode="nearest")
             assert result.dtype == np.uint8
             assert result.shape == (out_size[0], out_size[1], out_size[2])
 
@@ -318,7 +318,7 @@ class TestDtypeConsistency:
         
         # Test different output sizes
         for out_size in [(3, 5, 5), (10, 10, 10), (1, 20, 20)]:
-            result = ResamplingCythonBackend.resample(base_data, out_size, mode="nearest")
+            result = volresample.resample(base_data, out_size, mode="nearest")
             assert result.dtype == np.int16
             assert result.shape == (out_size[0], out_size[1], out_size[2])
 
@@ -327,11 +327,11 @@ class TestDtypeConsistency:
         data = np.random.randint(0, 256, (2, 4, 4), dtype=np.uint8)
         
         # Nearest: should stay uint8
-        result_nearest = ResamplingCythonBackend.resample(data, (3, 3, 3), mode="nearest")
+        result_nearest = volresample.resample(data, (3, 3, 3), mode="nearest")
         assert result_nearest.dtype == np.uint8
         
         # Linear: should become float32
-        result_linear = ResamplingCythonBackend.resample(data, (3, 3, 3), mode="linear")
+        result_linear = volresample.resample(data, (3, 3, 3), mode="linear")
         assert result_linear.dtype == np.float32
 
     def test_mode_consistency_int16(self):
@@ -339,9 +339,9 @@ class TestDtypeConsistency:
         data = np.random.randint(-32768, 32767, (2, 4, 4), dtype=np.int16)
         
         # Nearest: should stay int16
-        result_nearest = ResamplingCythonBackend.resample(data, (3, 3, 3), mode="nearest")
+        result_nearest = volresample.resample(data, (3, 3, 3), mode="nearest")
         assert result_nearest.dtype == np.int16
         
         # Linear: should become float32
-        result_linear = ResamplingCythonBackend.resample(data, (3, 3, 3), mode="linear")
+        result_linear = volresample.resample(data, (3, 3, 3), mode="linear")
         assert result_linear.dtype == np.float32
