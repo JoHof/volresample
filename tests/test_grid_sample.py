@@ -9,7 +9,7 @@ volresample only supports 3D grid sampling with 5D input (N, C, D, H, W):
 - D, H, W: depth, height, width (spatial dimensions)
 
 Tests cover:
-- All interpolation modes: bilinear/trilinear and nearest neighbor
+- All interpolation modes: linear (trilinear) and nearest neighbor
 - All padding modes: zeros, border, reflection
 - Various grid configurations: identity, translation, scaling, rotation
 - Edge cases: out-of-bound coordinates, small inputs, non-uniform sizes
@@ -31,6 +31,11 @@ except ImportError:
 
 # Tolerance for comparing results
 TOLERANCE = 2e-5  # Slightly relaxed for floating point precision
+
+# Mode mapping: volresample uses 'linear', PyTorch uses 'bilinear'
+def torch_mode(mode):
+    """Convert volresample mode to PyTorch mode."""
+    return "bilinear" if mode == "linear" else mode
 
 
 def generate_test_data(shape, seed=42):
@@ -75,7 +80,7 @@ def test_grid_sample_3d_modes():
     input_data = generate_test_data((1, 1, 4, 4, 4))
     grid = create_identity_grid_3d(1, 2, 2, 2)
     
-    for mode in ["bilinear", "nearest"]:
+    for mode in ["linear", "nearest"]:
         for padding in ["zeros", "border", "reflection"]:
             output = volresample.grid_sample(
                 input_data, grid, mode=mode, padding_mode=padding
@@ -85,7 +90,7 @@ def test_grid_sample_3d_modes():
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
-@pytest.mark.parametrize("mode", ["bilinear", "nearest"])
+@pytest.mark.parametrize("mode", ["linear", "nearest"])
 @pytest.mark.parametrize("padding_mode", ["zeros", "border", "reflection"])
 def test_3d_torch_match_identity_grid(mode, padding_mode):
     """Test 3D grid sample with identity grid matches PyTorch."""
@@ -96,7 +101,7 @@ def test_3d_torch_match_identity_grid(mode, padding_mode):
     input_torch = torch.from_numpy(input_data)
     grid_torch = torch.from_numpy(grid)
     torch_output = F.grid_sample(
-        input_torch, grid_torch, mode=mode, padding_mode=padding_mode, align_corners=False
+        input_torch, grid_torch, mode=torch_mode(mode), padding_mode=padding_mode, align_corners=False
     ).numpy()
     
     # Cython
@@ -110,7 +115,7 @@ def test_3d_torch_match_identity_grid(mode, padding_mode):
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
-@pytest.mark.parametrize("mode", ["bilinear", "nearest"])
+@pytest.mark.parametrize("mode", ["linear", "nearest"])
 @pytest.mark.parametrize("padding_mode", ["zeros", "border", "reflection"])
 def test_3d_torch_match_random_grid(mode, padding_mode):
     """Test 3D grid sample with random grid (including out-of-bounds) matches PyTorch."""
@@ -120,7 +125,7 @@ def test_3d_torch_match_random_grid(mode, padding_mode):
     input_torch = torch.from_numpy(input_data)
     grid_torch = torch.from_numpy(grid)
     torch_output = F.grid_sample(
-        input_torch, grid_torch, mode=mode, padding_mode=padding_mode, align_corners=False
+        input_torch, grid_torch, mode=torch_mode(mode), padding_mode=padding_mode, align_corners=False
     ).numpy()
     
     cython_output = volresample.grid_sample(
@@ -133,7 +138,7 @@ def test_3d_torch_match_random_grid(mode, padding_mode):
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
-@pytest.mark.parametrize("mode", ["bilinear", "nearest"])
+@pytest.mark.parametrize("mode", ["linear", "nearest"])
 def test_3d_torch_match_upsampling(mode):
     """Test 3D grid sample for upsampling (larger output than input)."""
     input_data = generate_test_data((1, 2, 4, 4, 4))
@@ -142,7 +147,7 @@ def test_3d_torch_match_upsampling(mode):
     input_torch = torch.from_numpy(input_data)
     grid_torch = torch.from_numpy(grid)
     torch_output = F.grid_sample(
-        input_torch, grid_torch, mode=mode, padding_mode="zeros", align_corners=False
+        input_torch, grid_torch, mode=torch_mode(mode), padding_mode="zeros", align_corners=False
     ).numpy()
     
     cython_output = volresample.grid_sample(
@@ -154,7 +159,7 @@ def test_3d_torch_match_upsampling(mode):
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
-@pytest.mark.parametrize("mode", ["bilinear", "nearest"])
+@pytest.mark.parametrize("mode", ["linear", "nearest"])
 def test_3d_torch_match_downsampling(mode):
     """Test 3D grid sample for downsampling (smaller output than input)."""
     input_data = generate_test_data((1, 2, 8, 8, 8))
@@ -163,7 +168,7 @@ def test_3d_torch_match_downsampling(mode):
     input_torch = torch.from_numpy(input_data)
     grid_torch = torch.from_numpy(grid)
     torch_output = F.grid_sample(
-        input_torch, grid_torch, mode=mode, padding_mode="zeros", align_corners=False
+        input_torch, grid_torch, mode=torch_mode(mode), padding_mode="zeros", align_corners=False
     ).numpy()
     
     cython_output = volresample.grid_sample(
@@ -175,7 +180,7 @@ def test_3d_torch_match_downsampling(mode):
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
-@pytest.mark.parametrize("mode", ["bilinear", "nearest"])
+@pytest.mark.parametrize("mode", ["linear", "nearest"])
 def test_3d_torch_match_non_uniform_sizes(mode):
     """Test 3D grid sample with non-uniform input and output sizes."""
     input_data = generate_test_data((2, 3, 7, 9, 11))  # Non-cubic input
@@ -184,7 +189,7 @@ def test_3d_torch_match_non_uniform_sizes(mode):
     input_torch = torch.from_numpy(input_data)
     grid_torch = torch.from_numpy(grid)
     torch_output = F.grid_sample(
-        input_torch, grid_torch, mode=mode, padding_mode="zeros", align_corners=False
+        input_torch, grid_torch, mode=torch_mode(mode), padding_mode="zeros", align_corners=False
     ).numpy()
     
     cython_output = volresample.grid_sample(
@@ -196,7 +201,7 @@ def test_3d_torch_match_non_uniform_sizes(mode):
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
-@pytest.mark.parametrize("mode", ["bilinear", "nearest"])
+@pytest.mark.parametrize("mode", ["linear", "nearest"])
 @pytest.mark.parametrize("padding_mode", ["zeros", "border", "reflection"])
 def test_3d_torch_match_extreme_out_of_bounds(mode, padding_mode):
     """Test 3D grid sample with extreme out-of-bounds coordinates."""
@@ -206,7 +211,7 @@ def test_3d_torch_match_extreme_out_of_bounds(mode, padding_mode):
     input_torch = torch.from_numpy(input_data)
     grid_torch = torch.from_numpy(grid)
     torch_output = F.grid_sample(
-        input_torch, grid_torch, mode=mode, padding_mode=padding_mode, align_corners=False
+        input_torch, grid_torch, mode=torch_mode(mode), padding_mode=padding_mode, align_corners=False
     ).numpy()
     
     cython_output = volresample.grid_sample(
@@ -219,7 +224,7 @@ def test_3d_torch_match_extreme_out_of_bounds(mode, padding_mode):
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
-@pytest.mark.parametrize("mode", ["bilinear", "nearest"])
+@pytest.mark.parametrize("mode", ["linear", "nearest"])
 def test_3d_torch_match_small_input(mode):
     """Test 3D grid sample with very small input."""
     input_data = generate_test_data((1, 1, 2, 2, 2))  # 2x2x2 input
@@ -228,7 +233,7 @@ def test_3d_torch_match_small_input(mode):
     input_torch = torch.from_numpy(input_data)
     grid_torch = torch.from_numpy(grid)
     torch_output = F.grid_sample(
-        input_torch, grid_torch, mode=mode, padding_mode="zeros", align_corners=False
+        input_torch, grid_torch, mode=torch_mode(mode), padding_mode="zeros", align_corners=False
     ).numpy()
     
     cython_output = volresample.grid_sample(
