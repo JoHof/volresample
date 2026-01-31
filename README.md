@@ -195,10 +195,10 @@ pytest tests/ --skip-torch
 
 ```bash
 # Use default threads (min of cpu_count and 4)
-python benchmark_resampling.py --iterations 10
+python tests/benchmark_resampling.py --iterations 10
 
 # Or specify thread count
-python benchmark_resampling.py --threads 4 --iterations 10
+python tests/benchmark_resampling.py --threads 4 --iterations 10
 ```
 
 ### Building from Source

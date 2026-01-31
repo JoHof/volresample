@@ -4,17 +4,11 @@
 import numpy as np
 import time
 from typing import List, Dict, Tuple, Any, Optional
-import sys
-import os
 import argparse
 import torch
 
 # Benchmark configuration
 N_WARMUP_ITERATIONS = 1
-
-# Add src and tests to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'tests'))
 
 import volresample
 from torch_reference import TorchReference
