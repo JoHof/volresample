@@ -10,6 +10,7 @@ import argparse
 N_WARMUP_ITERATIONS = 1
 
 import volresample
+import torch
 from torch_reference import TorchReference
 
 
@@ -29,7 +30,6 @@ def generate_test_data(shape: Tuple[int, ...], seed: int = 42, dtype: type = np.
 
 
 def benchmark_implementation(
-    backend_name: str,
     resample_func,
     data: np.ndarray,
     size: Tuple[int, int, int],
@@ -105,7 +105,6 @@ def analyze_differences(torch_result: np.ndarray, cython_result: np.ndarray) -> 
 
 
 def benchmark_grid_sample(
-    backend_name: str,
     grid_sample_func,
     input_data: np.ndarray,
     grid: np.ndarray,
@@ -117,7 +116,6 @@ def benchmark_grid_sample(
     """Benchmark a grid_sample implementation with repeated execution.
     
     Args:
-        backend_name: Name of backend ('volresample' or 'torch')
         grid_sample_func: Grid sample function to call
         input_data: Input data (N, C, D, H, W)
         grid: Grid for sampling (N, D_out, H_out, W_out, 3)
@@ -180,7 +178,7 @@ def run_benchmark(
     print("[volresample]", end=" ")
     try:
         cython_mean, cython_std, cython_result = benchmark_implementation(
-            "volresample", volresample.resample, data, output_size, mode, n_iterations=n_iterations
+            volresample.resample, data, output_size, mode, n_iterations=n_iterations
         )
         print(f"{cython_mean:.2f} ms (±{cython_std:.2f} ms)")
     except Exception as e:
@@ -193,7 +191,7 @@ def run_benchmark(
     print("\n[PyTorch]   ", end=" ")
     try:
         torch_mean, torch_std, torch_result = benchmark_implementation(
-            "torch", TorchReference.resample, data, output_size, mode, n_iterations=n_iterations
+            TorchReference.resample, data, output_size, mode, n_iterations=n_iterations
         )
         print(f"{torch_mean:.2f} ms (±{torch_std:.2f} ms)")
     except Exception as e:
@@ -276,7 +274,7 @@ def run_grid_sample_benchmark(
     print("[volresample]", end=" ")
     try:
         cython_mean, cython_std, cython_result = benchmark_grid_sample(
-            "volresample", volresample.grid_sample, input_data, grid, mode, padding_mode, n_iterations=n_iterations
+            volresample.grid_sample, input_data, grid, mode, padding_mode, n_iterations=n_iterations
         )
         print(f"{cython_mean:.2f} ms (±{cython_std:.2f} ms)")
     except Exception as e:
@@ -289,7 +287,7 @@ def run_grid_sample_benchmark(
     print("\n[PyTorch]   ", end=" ")
     try:
         torch_mean, torch_std, torch_result = benchmark_grid_sample(
-            "torch", TorchReference.grid_sample, input_data, grid, mode, padding_mode, n_iterations=n_iterations
+            TorchReference.grid_sample, input_data, grid, mode, padding_mode, n_iterations=n_iterations
         )
         print(f"{torch_mean:.2f} ms (±{torch_std:.2f} ms)")
     except Exception as e:
