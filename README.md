@@ -1,7 +1,7 @@
 # volresample
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 
 Fast 3D volume resampling with Cython and OpenMP parallelization.
 
@@ -73,18 +73,21 @@ print(output.shape)  # (2, 3, 24, 24, 24)
 ### Parallelization
 
 ```python
-# Use multiple threads for faster processing
-resampled = volresample.resample(
-    volume, 
-    (64, 64, 64), 
-    mode='linear',
-    parallel_threads=4
-)
+import volresample
+
+# Check default thread count (min of cpu_count and 4)
+print(volresample.get_num_threads())  # e.g., 4
+
+# Set custom thread count
+volresample.set_num_threads(8)
+
+# All subsequent operations use 8 threads
+resampled = volresample.resample(volume, (64, 64, 64), mode='linear')
 ```
 
 ## API Reference
 
-### `resample(data, size, mode='linear', parallel_threads=0)`
+### `resample(data, size, mode='linear')`
 
 Resample a 3D or 4D volume to a new size.
 
@@ -95,7 +98,6 @@ Resample a 3D or 4D volume to a new size.
   - `'nearest'`: Nearest neighbor (works with all dtypes)
   - `'linear'`: Trilinear interpolation (float32 only)
   - `'area'`: Area-based averaging (float32 only, suited for downsampling)
-- `parallel_threads` (int): Number of OpenMP threads (0 = system default)
 
 **PyTorch correspondence:**
 
@@ -114,7 +116,7 @@ volresample does not expose an `align_corners` parameter. The behavior matches P
 - `uint8`, `int16`: Only with `mode='nearest'`
 - `float32`: All modes
 
-### `grid_sample(input, grid, mode='bilinear', padding_mode='zeros', align_corners=False, parallel_threads=0)`
+### `grid_sample(input, grid, mode='bilinear', padding_mode='zeros', align_corners=False)`
 
 Sample input at arbitrary locations specified by a grid.
 
@@ -125,10 +127,23 @@ Sample input at arbitrary locations specified by a grid.
 - `mode` (str): `'nearest'` or `'bilinear'`
 - `padding_mode` (str): `'zeros'`, `'border'`, or `'reflection'`
 - `align_corners` (bool): Whether to align corner pixels (default: False)
-- `parallel_threads` (int): Number of OpenMP threads (0 = system default)
 
 **Returns:**
 - Sampled array of shape `(N, C, D_out, H_out, W_out)`
+
+### `set_num_threads(num_threads)`
+
+Set the number of threads used for parallel operations.
+
+**Parameters:**
+- `num_threads` (int): Number of threads to use (must be >= 1)
+
+### `get_num_threads()`
+
+Get the current number of threads used for parallel operations.
+
+**Returns:**
+- Current thread count (default: `min(cpu_count, 4)`)
 
 ## Performance
 
@@ -171,6 +186,10 @@ pytest tests/ --skip-torch
 ### Running Benchmarks
 
 ```bash
+# Use default threads (min of cpu_count and 4)
+python benchmark_resampling.py --iterations 10
+
+# Or specify thread count
 python benchmark_resampling.py --threads 4 --iterations 10
 ```
 

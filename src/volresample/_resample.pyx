@@ -11,6 +11,9 @@ from cython.parallel import prange
 from libc.math cimport floor, ceil
 from libc.stdlib cimport malloc, free
 
+# Import global thread configuration
+from volresample._config import get_num_threads
+
 cdef extern from "omp.h":
     int omp_set_num_threads(int)
 
@@ -23,12 +26,18 @@ include "cython_src/linear.pyx"
 include "cython_src/area.pyx"
 include "cython_src/grid_sample.pyx"
 
+
+cdef inline void _apply_thread_settings() noexcept:
+    """Apply global thread settings to OpenMP."""
+    cdef int num_threads = get_num_threads()
+    omp_set_num_threads(num_threads)
+
+
 # Dispatch wrappers for dtype support in nearest neighbor
 cdef object _resample_nearest_dispatch(
     object data,
     tuple size,
-    str mode="nearest",
-    int parallel_threads=0
+    str mode="nearest"
 ):
     """Dispatch nearest neighbor resampling based on input dtype."""
     cdef int in_d = data.shape[0]
@@ -57,8 +66,8 @@ cdef object _resample_nearest_dispatch(
     cdef float* data_ptr_f32
     cdef float* output_ptr_f32
 
-    if parallel_threads > 0:
-        omp_set_num_threads(parallel_threads)
+    # Apply global thread settings
+    _apply_thread_settings()
 
     # Dispatch based on dtype - ensure C-contiguous memory layout
     if data.dtype == np.uint8:
@@ -97,8 +106,7 @@ cdef object _resample_nearest_dispatch(
 def resample(
     data,
     tuple size,
-    str mode="linear",
-    int parallel_threads=0
+    str mode="linear"
 ):
     """Resample 3D or 4D volume using specified interpolation mode.
     
@@ -106,14 +114,18 @@ def resample(
         data: Input array, shape (D, H, W) or (C, D, H, W). Supports uint8, int16, float32.
         size: Output size (D, H, W).
         mode: Interpolation mode - 'nearest', 'linear', 'area'.
-        parallel_threads: Number of threads (0 = default).
         
     Returns:
         Resampled array with same number of dimensions as input.
         
+    Note:
+        Thread count is controlled globally via volresample.set_num_threads().
+        Default is min(cpu_count, 4).
+        
     Examples:
         >>> import numpy as np
         >>> import volresample
+        >>> volresample.set_num_threads(4)  # Optional: set thread count
         >>> data = np.random.rand(64, 64, 64).astype(np.float32)
         >>> resampled = volresample.resample(data, (32, 32, 32), mode='linear')
         >>> resampled.shape
@@ -126,9 +138,8 @@ def resample(
     cdef cnp.ndarray channel_output
     cdef int c
     
-    # Set OpenMP threads once at the start
-    if parallel_threads > 0:
-        omp_set_num_threads(parallel_threads)
+    # Apply global thread settings
+    _apply_thread_settings()
     
     # Ensure numpy array with C-contiguous memory layout
     data_np = np.ascontiguousarray(data)
@@ -142,19 +153,18 @@ def resample(
         channel_outputs = []
         
         for c in range(n_channels):
-            channel_output = _resample_channel(data_np[c], size, mode, parallel_threads)
+            channel_output = _resample_channel(data_np[c], size, mode)
             channel_outputs.append(channel_output)
         
         return np.stack(channel_outputs, axis=0)
     
     # 3D case
-    return _resample_channel(data_np, size, mode, parallel_threads)
+    return _resample_channel(data_np, size, mode)
 
 cdef object _resample_channel(
     cnp.ndarray data,
     tuple size,
-    str mode,
-    int parallel_threads
+    str mode
 ):
     """Resample a single 3D volume."""
     cdef int in_d = data.shape[0]
@@ -175,7 +185,7 @@ cdef object _resample_channel(
     
     # Mode dispatch
     if mode == "nearest":
-        return _resample_nearest_dispatch(data, size, mode, parallel_threads)
+        return _resample_nearest_dispatch(data, size, mode)
     
     elif mode == "linear":
         # Linear always uses float32, ensure C-contiguous
@@ -211,8 +221,7 @@ def grid_sample(
     grid,
     str mode="bilinear",
     str padding_mode="zeros",
-    bint align_corners=False,
-    int parallel_threads=0
+    bint align_corners=False
 ):
     """Sample input using a sampling grid (similar to PyTorch's grid_sample).
     
@@ -223,10 +232,13 @@ def grid_sample(
         mode: Interpolation mode - 'bilinear' or 'nearest'.
         padding_mode: Padding mode for out-of-bounds values - 'zeros', 'border', 'reflection'.
         align_corners: If True, corner pixels are aligned (default False).
-        parallel_threads: Number of threads (0 = default).
         
     Returns:
         Sampled array of shape (N, C, D_out, H_out, W_out).
+        
+    Note:
+        Thread count is controlled globally via volresample.set_num_threads().
+        Default is min(cpu_count, 4).
         
     Examples:
         >>> import numpy as np
@@ -262,8 +274,8 @@ def grid_sample(
     cdef float* grid_ptr
     cdef float* output_ptr
     
-    if parallel_threads > 0:
-        omp_set_num_threads(parallel_threads)
+    # Apply global thread settings
+    _apply_thread_settings()
     
     # Determine which grid_sample function to call
     cdef int mode_id = 0 if mode == "nearest" else 1  # 0=nearest, 1=bilinear

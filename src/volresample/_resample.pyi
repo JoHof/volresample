@@ -8,7 +8,6 @@ def resample(
     data: NDArray[np.float32] | NDArray[np.uint8] | NDArray[np.int16],
     size: Tuple[int, int, int],
     mode: Literal["nearest", "linear", "area"] = "linear",
-    parallel_threads: int = 0,
 ) -> NDArray[np.float32] | NDArray[np.uint8] | NDArray[np.int16]:
     """Resample a 3D or 4D volume to a new size.
 
@@ -22,16 +21,20 @@ def resample(
             - 'linear': Trilinear interpolation (float32 only).
               Corresponds to PyTorch's 'trilinear'.
             - 'area': Area-based averaging (float32 only, suited for downsampling).
-        parallel_threads: Number of OpenMP threads. 0 uses system default.
 
     Returns:
         Resampled array with same number of dimensions as input.
         - For nearest mode: preserves input dtype
         - For linear/area mode: float32 output
+        
+    Note:
+        Thread count is controlled globally via volresample.set_num_threads().
+        Default is min(cpu_count, 4).
 
     Examples:
         >>> import numpy as np
         >>> import volresample
+        >>> volresample.set_num_threads(4)  # Optional: configure threads
         >>> data = np.random.rand(64, 64, 64).astype(np.float32)
         >>> resampled = volresample.resample(data, (32, 32, 32), mode='linear')
         >>> resampled.shape
@@ -51,7 +54,6 @@ def grid_sample(
     mode: Literal["bilinear", "nearest"] = "bilinear",
     padding_mode: Literal["zeros", "border", "reflection"] = "zeros",
     align_corners: bool = False,
-    parallel_threads: int = 0,
 ) -> NDArray[np.float32]:
     """Sample input at arbitrary locations specified by a grid.
 
@@ -70,10 +72,13 @@ def grid_sample(
             - 'border': Use border values for out-of-bounds samples
             - 'reflection': Reflect coordinates at boundaries
         align_corners: If True, corner pixels are aligned. Default False.
-        parallel_threads: Number of OpenMP threads. 0 uses system default.
 
     Returns:
         Sampled array of shape (N, C, D_out, H_out, W_out).
+        
+    Note:
+        Thread count is controlled globally via volresample.set_num_threads().
+        Default is min(cpu_count, 4).
 
     Examples:
         >>> import numpy as np

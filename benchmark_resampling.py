@@ -43,7 +43,6 @@ def benchmark_implementation(
     mode: str,
     n_warmup: int = 1,
     n_iterations: int = 50,
-    parallel_threads: int = 0,
 ) -> Tuple[float, float, np.ndarray]:
     """Benchmark a resampling implementation with repeated execution.
     
@@ -55,29 +54,19 @@ def benchmark_implementation(
         mode: Interpolation mode ('nearest', 'linear', or 'area')
         n_warmup: Number of warmup iterations
         n_iterations: Number of timed iterations
-        parallel_threads: Number of threads for volresample
         
     Returns:
         Tuple of (mean_time_ms, std_time_ms, output_array)
     """
-    if backend_name == "torch":
-        torch.set_num_threads(max(parallel_threads, 1))
-    
     # Warmup
     for _ in range(n_warmup):
-        if backend_name == "torch":
-            result = resample_func(data, size, mode=mode)
-        else:
-            result = resample_func(data, size, mode=mode, parallel_threads=parallel_threads)
+        result = resample_func(data, size, mode=mode)
     
     # Benchmark
     times = []
     for _ in range(n_iterations):
         start = time.perf_counter()
-        if backend_name == "torch":
-            result = resample_func(data, size, mode=mode)
-        else:
-            result = resample_func(data, size, mode=mode, parallel_threads=parallel_threads)
+        result = resample_func(data, size, mode=mode)
         end = time.perf_counter()
         times.append((end - start) * 1000)  # Convert to ms
 
@@ -131,7 +120,6 @@ def benchmark_grid_sample(
     padding_mode: str,
     n_warmup: int = 1,
     n_iterations: int = 10,
-    parallel_threads: int = 0,
 ) -> Tuple[float, float, np.ndarray]:
     """Benchmark a grid_sample implementation with repeated execution.
     
@@ -144,29 +132,19 @@ def benchmark_grid_sample(
         padding_mode: Padding mode ('zeros', 'border', 'reflection')
         n_warmup: Number of warmup iterations
         n_iterations: Number of timed iterations
-        parallel_threads: Number of threads for volresample
         
     Returns:
         Tuple of (mean_time_ms, std_time_ms, output_array)
     """
-    if backend_name == "torch":
-        torch.set_num_threads(max(parallel_threads, 1))
-    
     # Warmup
     for _ in range(n_warmup):
-        if backend_name == "torch":
-            result = grid_sample_func(input_data, grid, mode=mode, padding_mode=padding_mode)
-        else:
-            result = grid_sample_func(input_data, grid, mode=mode, padding_mode=padding_mode, parallel_threads=parallel_threads)
+        result = grid_sample_func(input_data, grid, mode=mode, padding_mode=padding_mode)
     
     # Benchmark
     times = []
     for _ in range(n_iterations):
         start = time.perf_counter()
-        if backend_name == "torch":
-            result = grid_sample_func(input_data, grid, mode=mode, padding_mode=padding_mode)
-        else:
-            result = grid_sample_func(input_data, grid, mode=mode, padding_mode=padding_mode, parallel_threads=parallel_threads)
+        result = grid_sample_func(input_data, grid, mode=mode, padding_mode=padding_mode)
         end = time.perf_counter()
         times.append((end - start) * 1000)  # Convert to ms
 
@@ -181,7 +159,6 @@ def run_benchmark(
     output_size: Tuple[int, int, int],
     test_name: str,
     mode: str = "linear",
-    parallel_threads: int = 0,
     dtype: type = np.float32,
     n_iterations: int = 5,
 ) -> Optional[Dict[str, any]]:
@@ -192,7 +169,6 @@ def run_benchmark(
         output_size: Target spatial dimensions
         test_name: Name for this test
         mode: Interpolation mode ('nearest', 'linear', or 'area')
-        parallel_threads: Number of threads for parallel backends (default 0)
         dtype: Data type for test data (uint8, int16, or float32)
         
     Returns:
@@ -202,7 +178,6 @@ def run_benchmark(
     print(f"Test: {test_name}")
     print(f"  Mode: {mode}, Dtype: {dtype.__name__}")
     print(f"  Input: {input_shape} → Output: {output_size}")
-    print(f"  Threads: {parallel_threads}")
     print(f"{'='*80}")
     
     # Generate test data
@@ -212,7 +187,7 @@ def run_benchmark(
     print("[volresample]", end=" ")
     try:
         cython_mean, cython_std, cython_result = benchmark_implementation(
-            "volresample", volresample.resample, data, output_size, mode, n_iterations=n_iterations, parallel_threads=parallel_threads
+            "volresample", volresample.resample, data, output_size, mode, n_iterations=n_iterations
         )
         print(f"{cython_mean:.2f} ms (±{cython_std:.2f} ms)")
     except Exception as e:
@@ -225,7 +200,7 @@ def run_benchmark(
     print("\n[PyTorch]   ", end=" ")
     try:
         torch_mean, torch_std, torch_result = benchmark_implementation(
-            "torch", TorchReference.resample, data, output_size, mode, n_iterations=n_iterations, parallel_threads=parallel_threads
+            "torch", TorchReference.resample, data, output_size, mode, n_iterations=n_iterations
         )
         print(f"{torch_mean:.2f} ms (±{torch_std:.2f} ms)")
     except Exception as e:
@@ -279,7 +254,6 @@ def run_grid_sample_benchmark(
     test_name: str,
     mode: str = "bilinear",
     padding_mode: str = "zeros",
-    parallel_threads: int = 0,
     n_iterations: int = 5,
 ) -> Optional[Dict[str, any]]:
     """Run benchmark for a grid_sample test case.
@@ -290,7 +264,6 @@ def run_grid_sample_benchmark(
         test_name: Name for this test
         mode: Interpolation mode ('bilinear' or 'nearest')
         padding_mode: Padding mode ('zeros', 'border', 'reflection')
-        parallel_threads: Number of threads
         
     Returns:
         Dictionary with benchmark results or None if error
@@ -299,7 +272,6 @@ def run_grid_sample_benchmark(
     print(f"Test: {test_name}")
     print(f"  Mode: {mode}, Padding: {padding_mode}")
     print(f"  Input: {input_shape} → Output: {output_shape}")
-    print(f"  Threads: {parallel_threads}")
     print(f"{'='*80}")
     
     # Generate test data
@@ -311,7 +283,7 @@ def run_grid_sample_benchmark(
     print("[volresample]", end=" ")
     try:
         cython_mean, cython_std, cython_result = benchmark_grid_sample(
-            "volresample", volresample.grid_sample, input_data, grid, mode, padding_mode, n_iterations=n_iterations, parallel_threads=parallel_threads
+            "volresample", volresample.grid_sample, input_data, grid, mode, padding_mode, n_iterations=n_iterations
         )
         print(f"{cython_mean:.2f} ms (±{cython_std:.2f} ms)")
     except Exception as e:
@@ -324,7 +296,7 @@ def run_grid_sample_benchmark(
     print("\n[PyTorch]   ", end=" ")
     try:
         torch_mean, torch_std, torch_result = benchmark_grid_sample(
-            "torch", TorchReference.grid_sample, input_data, grid, mode, padding_mode, n_iterations=n_iterations, parallel_threads=parallel_threads
+            "torch", TorchReference.grid_sample, input_data, grid, mode, padding_mode, n_iterations=n_iterations
         )
         print(f"{torch_mean:.2f} ms (±{torch_std:.2f} ms)")
     except Exception as e:
@@ -369,11 +341,19 @@ def run_grid_sample_benchmark(
 
 def main():
     parser = argparse.ArgumentParser(description="Benchmark Cython and PyTorch resampling.")
-    parser.add_argument('--threads', type=int, default=0, help='Number of threads for parallel backends (0=default)')
+    parser.add_argument('--threads', type=int, default=0, help='Number of threads (0=use default: min(cpu_count, 4))')
     parser.add_argument('--iterations', type=int, default=5, help='Number of benchmark iterations (default=5)')
     args = parser.parse_args()
-    parallel_threads = args.threads
     n_iterations = args.iterations
+    
+    # Set thread count for both backends
+    if args.threads > 0:
+        volresample.set_num_threads(args.threads)
+        torch.set_num_threads(args.threads)
+    else:
+        # Use volresample default for both
+        num_threads = volresample.get_num_threads()
+        torch.set_num_threads(num_threads)
     
     """Run benchmark suite."""
     print("\n" + "="*80)
@@ -385,6 +365,7 @@ def main():
     print("\n[Benchmark Configuration]")
     print(f"  Warmup iterations: {N_WARMUP_ITERATIONS}")
     print(f"  Benchmark iterations: {n_iterations}")
+    print(f"  Threads: {volresample.get_num_threads()}")
     
     # Check availability
     print("\n[Backend Availability]")
@@ -430,7 +411,7 @@ def main():
     for test_case in test_cases:
         input_shape, output_size, test_name, mode = test_case[:4]
         dtype = test_case[4] if len(test_case) > 4 else np.float32
-        result = run_benchmark(input_shape, output_size, test_name, mode, parallel_threads=parallel_threads, dtype=dtype, n_iterations=n_iterations)
+        result = run_benchmark(input_shape, output_size, test_name, mode, dtype=dtype, n_iterations=n_iterations)
         if result is not None:
             results.append(result)
     
@@ -452,7 +433,7 @@ def main():
     grid_results = []
     for input_shape, output_shape, test_name, mode, padding_mode in grid_sample_tests:
         result = run_grid_sample_benchmark(
-            input_shape, output_shape, test_name, mode, padding_mode, parallel_threads=parallel_threads, n_iterations=n_iterations
+            input_shape, output_shape, test_name, mode, padding_mode, n_iterations=n_iterations
         )
         if result is not None:
             grid_results.append(result)

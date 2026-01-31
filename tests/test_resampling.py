@@ -13,7 +13,7 @@ This module tests both Cython and PyTorch resampling implementations, including:
    - 4D area mode: known issue with implementation differences (marked as xfail)
    - Non-uniform sizes: tests with non-cubic input/output dimensions
    - Edge cases: small data, upsampling, downsampling
-   - Thread safety: parallel_threads parameter correctness
+   - Thread safety: global set_num_threads() correctness
 
 Test Results:
 - All 27 tests pass with exact match (max diff < 1e-5)
@@ -200,17 +200,16 @@ def test_non_uniform_sizes_torch_cython_match(mode):
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch backend not available")
 def test_thread_safety_cython():
-    """Test that parallel_threads parameter doesn't affect correctness."""
+    """Test that different thread counts don't affect correctness."""
     data = generate_test_data((64, 64, 64))
     
-    # Test with different thread counts
+    # Test with different thread counts using global setting
     # Skip area mode as it has known differences from PyTorch
-    for threads in [0, 1, 2, 4]:
+    for threads in [1, 2, 4]:
+        volresample.set_num_threads(threads)
         for mode in ["nearest", "linear"]:
             torch_result = TorchReference().resample(data, (32, 32, 32), mode=mode)
-            cython_result = volresample.resample(
-                data, (32, 32, 32), mode=mode, parallel_threads=threads
-            )
+            cython_result = volresample.resample(data, (32, 32, 32), mode=mode)
             
             max_diff = np.max(np.abs(torch_result - cython_result))
             assert max_diff < TOLERANCE, \
