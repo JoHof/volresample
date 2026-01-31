@@ -37,7 +37,7 @@ Grid sampling:
 
 >>> input = np.random.rand(1, 2, 32, 32, 32).astype(np.float32)
 >>> grid = np.random.uniform(-1, 1, (1, 24, 24, 24, 3)).astype(np.float32)
->>> output = volresample.grid_sample(input, grid, mode='bilinear')
+>>> output = volresample.grid_sample(input, grid, mode='linear')
 >>> output.shape
 (1, 2, 24, 24, 24)
 

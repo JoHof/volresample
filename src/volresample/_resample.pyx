@@ -37,7 +37,6 @@ cdef inline void _apply_thread_settings() noexcept:
 cdef object _resample_nearest_dispatch(
     object data,
     tuple size,
-    str mode="nearest"
 ):
     """Dispatch nearest neighbor resampling based on input dtype."""
     cdef int in_d = data.shape[0]
@@ -65,9 +64,6 @@ cdef object _resample_nearest_dispatch(
     cdef cnp.ndarray[cnp.float32_t, ndim=3] output_f32
     cdef float* data_ptr_f32
     cdef float* output_ptr_f32
-
-    # Apply global thread settings
-    _apply_thread_settings()
 
     # Dispatch based on dtype - ensure C-contiguous memory layout
     if data.dtype == np.uint8:
@@ -185,7 +181,7 @@ cdef object _resample_channel(
     
     # Mode dispatch
     if mode == "nearest":
-        return _resample_nearest_dispatch(data, size, mode)
+        return _resample_nearest_dispatch(data, size)
     
     elif mode == "linear":
         # Linear always uses float32, ensure C-contiguous
@@ -278,7 +274,6 @@ def grid_sample(
     
     # Determine which grid_sample function to call
     # Accept both 'linear' and 'bilinear' for compatibility
-    cdef bint use_linear = (mode == "linear" or mode == "bilinear")
     cdef int padding_id = 0  # 0=zeros, 1=border, 2=reflection
     
     if mode not in ("nearest", "linear", "bilinear"):

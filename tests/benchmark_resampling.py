@@ -5,7 +5,6 @@ import numpy as np
 import time
 from typing import List, Dict, Tuple, Any, Optional
 import argparse
-import torch
 
 # Benchmark configuration
 N_WARMUP_ITERATIONS = 1

@@ -16,7 +16,7 @@ This module tests both Cython and PyTorch resampling implementations, including:
    - Thread safety: global set_num_threads() correctness
 
 Test Results:
-- All 27 tests pass with exact match (max diff < 1e-5)
+- All tests pass with exact match (max diff < 1e-5)
 - Covers all interpolation modes (nearest, linear, area) for both 3D and 4D data
 - Tests include edge cases, non-uniform sizes, and thread safety
 """

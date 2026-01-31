@@ -165,7 +165,7 @@ Benchmarks comparing volresample vs PyTorch 2.8.0 on Intel CPU with 4 threads:
 | Resample | 512³ → 256³ | area | 74 ms | 663 ms | 9x |
 | Resample | 512³ → 256³ | nearest (uint8) | 5 ms | 14 ms | 2.6x |
 | Resample | 512³ → 256³ | nearest (int16) | 9 ms | 161 ms | 18x |
-| Grid sample | 128³ → 96³ | bilinear | 59 ms | 232 ms | 4x |
+| Grid sample | 128³ → 96³ | linear | 59 ms | 232 ms | 4x |
 
 **Notes on speedups:**
 
