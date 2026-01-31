@@ -330,3 +330,90 @@ def test_3d_single_voxel_input():
     
     max_diff = np.max(np.abs(torch_output - cython_output))
     assert max_diff < TOLERANCE, f"3D 1x1x1 input: max diff {max_diff:.6e}"
+
+
+# =============================================================================
+# Memory Layout Tests (non-C-contiguous arrays)
+# =============================================================================
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
+def test_fortran_contiguous_input():
+    """Fortran-contiguous input array should give correct result."""
+    input_c = np.random.randn(1, 2, 8, 8, 8).astype(np.float32)
+    input_f = np.asfortranarray(input_c.copy())
+    grid = create_identity_grid_3d(1, 4, 4, 4)
+    
+    assert not input_f.flags['C_CONTIGUOUS']
+    
+    input_torch = torch.from_numpy(input_f)
+    grid_torch = torch.from_numpy(grid)
+    torch_output = F.grid_sample(
+        input_torch, grid_torch, mode="bilinear", padding_mode="zeros", align_corners=False
+    ).numpy()
+    
+    cython_output = volresample.grid_sample(input_f, grid)
+    
+    max_diff = np.max(np.abs(torch_output - cython_output))
+    assert max_diff < TOLERANCE, f"Fortran input: max_diff={max_diff}"
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
+def test_fortran_contiguous_grid():
+    """Fortran-contiguous grid array should give correct result."""
+    input_data = np.random.randn(1, 2, 8, 8, 8).astype(np.float32)
+    grid_c = create_identity_grid_3d(1, 4, 4, 4)
+    grid_f = np.asfortranarray(grid_c.copy())
+    
+    assert not grid_f.flags['C_CONTIGUOUS']
+    
+    input_torch = torch.from_numpy(input_data)
+    grid_torch = torch.from_numpy(grid_f)
+    torch_output = F.grid_sample(
+        input_torch, grid_torch, mode="bilinear", padding_mode="zeros", align_corners=False
+    ).numpy()
+    
+    cython_output = volresample.grid_sample(input_data, grid_f)
+    
+    max_diff = np.max(np.abs(torch_output - cython_output))
+    assert max_diff < TOLERANCE, f"Fortran grid: max_diff={max_diff}"
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
+def test_sliced_non_contiguous_input():
+    """Non-contiguous sliced input should give correct result."""
+    input_full = np.random.randn(2, 4, 16, 16, 16).astype(np.float32)
+    input_sliced = input_full[::2, ::2, ::2, ::2, ::2]
+    grid = create_identity_grid_3d(1, 4, 4, 4)
+    
+    assert not input_sliced.flags['C_CONTIGUOUS']
+    
+    input_torch = torch.from_numpy(input_sliced)
+    grid_torch = torch.from_numpy(grid)
+    torch_output = F.grid_sample(
+        input_torch, grid_torch, mode="bilinear", padding_mode="zeros", align_corners=False
+    ).numpy()
+    
+    cython_output = volresample.grid_sample(input_sliced, grid)
+    
+    max_diff = np.max(np.abs(torch_output - cython_output))
+    assert max_diff < TOLERANCE, f"Sliced input: max_diff={max_diff}"
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
+def test_both_non_contiguous():
+    """Both input and grid non-contiguous should give correct result."""
+    input_c = np.random.randn(1, 2, 8, 8, 8).astype(np.float32)
+    input_f = np.asfortranarray(input_c.copy())
+    grid_c = create_identity_grid_3d(1, 4, 4, 4)
+    grid_f = np.asfortranarray(grid_c.copy())
+    
+    input_torch = torch.from_numpy(input_f)
+    grid_torch = torch.from_numpy(grid_f)
+    torch_output = F.grid_sample(
+        input_torch, grid_torch, mode="bilinear", padding_mode="zeros", align_corners=False
+    ).numpy()
+    
+    cython_output = volresample.grid_sample(input_f, grid_f)
+    
+    max_diff = np.max(np.abs(torch_output - cython_output))
+    assert max_diff < TOLERANCE, f"Both non-contiguous: max_diff={max_diff}"

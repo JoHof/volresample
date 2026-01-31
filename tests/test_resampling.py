@@ -461,3 +461,138 @@ def test_output_to_size_one(mode):
     assert torch_result.shape == cython_result.shape == (1, 1, 1)
     max_diff = np.max(np.abs(torch_result - cython_result))
     assert max_diff < TOLERANCE, f"To 1x1x1 {mode}: Max diff {max_diff:.6e}"
+
+
+# ============================================================================
+# Memory Layout Tests (non-C-contiguous arrays)
+# ============================================================================
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
+def test_fortran_contiguous_nearest():
+    """Fortran-contiguous array should give same result as C-contiguous."""
+    data_c = np.arange(27, dtype=np.float32).reshape(3, 3, 3)
+    data_f = np.asfortranarray(data_c.copy())
+    
+    assert not data_f.flags['C_CONTIGUOUS']
+    assert data_f.flags['F_CONTIGUOUS']
+    
+    torch_r = TorchReference.resample(data_f, (2, 2, 2), mode='nearest')
+    cython_r = volresample.resample(data_f, (2, 2, 2), mode='nearest')
+    
+    max_diff = np.max(np.abs(torch_r - cython_r))
+    assert max_diff < TOLERANCE, f"Fortran array nearest: max_diff={max_diff}"
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
+def test_fortran_contiguous_linear():
+    """Fortran-contiguous array with linear mode."""
+    data_c = np.random.randn(16, 16, 16).astype(np.float32)
+    data_f = np.asfortranarray(data_c.copy())
+    
+    torch_r = TorchReference.resample(data_f, (8, 8, 8), mode='linear')
+    cython_r = volresample.resample(data_f, (8, 8, 8), mode='linear')
+    
+    max_diff = np.max(np.abs(torch_r - cython_r))
+    assert max_diff < TOLERANCE, f"Fortran array linear: max_diff={max_diff}"
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
+def test_non_contiguous_sliced():
+    """Non-contiguous sliced array should give correct result."""
+    data_full = np.random.randn(32, 32, 32).astype(np.float32)
+    data_sliced = data_full[::2, ::2, ::2]  # Non-contiguous view
+    
+    assert not data_sliced.flags['C_CONTIGUOUS']
+    
+    torch_r = TorchReference.resample(data_sliced, (8, 8, 8), mode='linear')
+    cython_r = volresample.resample(data_sliced, (8, 8, 8), mode='linear')
+    
+    max_diff = np.max(np.abs(torch_r - cython_r))
+    assert max_diff < TOLERANCE, f"Sliced array: max_diff={max_diff}"
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
+def test_transposed_array():
+    """Transposed array should give correct result."""
+    data = np.random.randn(16, 16, 16).astype(np.float32).T
+    
+    assert not data.flags['C_CONTIGUOUS']
+    
+    torch_r = TorchReference.resample(data, (8, 8, 8), mode='linear')
+    cython_r = volresample.resample(data, (8, 8, 8), mode='linear')
+    
+    max_diff = np.max(np.abs(torch_r - cython_r))
+    assert max_diff < TOLERANCE, f"Transposed array: max_diff={max_diff}"
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
+def test_4d_fortran_contiguous():
+    """4D Fortran-contiguous array."""
+    data_c = np.random.randn(4, 16, 16, 16).astype(np.float32)
+    data_f = np.asfortranarray(data_c.copy())
+    
+    torch_r = TorchReference.resample(data_f, (8, 8, 8), mode='linear')
+    cython_r = volresample.resample(data_f, (8, 8, 8), mode='linear')
+    
+    max_diff = np.max(np.abs(torch_r - cython_r))
+    assert max_diff < TOLERANCE, f"4D Fortran array: max_diff={max_diff}"
+
+
+# ============================================================================
+# Area Mode Mixed Scaling Tests
+# ============================================================================
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
+def test_area_mixed_up_down_scaling():
+    """Area mode with some dims upsampling, some downsampling."""
+    # 8x16x32 -> 16x8x64
+    # dim 0: upsample (8->16), dim 1: downsample (16->8), dim 2: upsample (32->64)
+    np.random.seed(42)
+    data = np.random.randn(8, 16, 32).astype(np.float32)
+    
+    torch_r = TorchReference.resample(data, (16, 8, 64), mode='area')
+    cython_r = volresample.resample(data, (16, 8, 64), mode='area')
+    
+    max_diff = np.max(np.abs(torch_r - cython_r))
+    assert max_diff < TOLERANCE, f"Mixed up/down scaling: max_diff={max_diff}"
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
+def test_area_one_dim_upsampling():
+    """Area mode with one dimension upsampling."""
+    # 16x16x16 -> 8x8x32 (last dim upsamples)
+    np.random.seed(42)
+    data = np.random.randn(16, 16, 16).astype(np.float32)
+    
+    torch_r = TorchReference.resample(data, (8, 8, 32), mode='area')
+    cython_r = volresample.resample(data, (8, 8, 32), mode='area')
+    
+    max_diff = np.max(np.abs(torch_r - cython_r))
+    assert max_diff < TOLERANCE, f"One dim upsampling: max_diff={max_diff}"
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
+def test_area_two_dims_down_one_up():
+    """Area mode with two dims downsampling, one upsampling."""
+    # 16x16x8 -> 8x8x16
+    np.random.seed(42)
+    data = np.random.randn(16, 16, 8).astype(np.float32)
+    
+    torch_r = TorchReference.resample(data, (8, 8, 16), mode='area')
+    cython_r = volresample.resample(data, (8, 8, 16), mode='area')
+    
+    max_diff = np.max(np.abs(torch_r - cython_r))
+    assert max_diff < TOLERANCE, f"Two down, one up: max_diff={max_diff}"
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
+def test_area_4d_mixed_scaling():
+    """4D area mode with mixed scaling."""
+    np.random.seed(42)
+    data = np.random.randn(4, 8, 16, 8).astype(np.float32)
+    
+    torch_r = TorchReference.resample(data, (16, 8, 16), mode='area')
+    cython_r = volresample.resample(data, (16, 8, 16), mode='area')
+    
+    max_diff = np.max(np.abs(torch_r - cython_r))
+    assert max_diff < TOLERANCE, f"4D mixed scaling: max_diff={max_diff}"

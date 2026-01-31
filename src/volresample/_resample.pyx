@@ -60,9 +60,9 @@ cdef object _resample_nearest_dispatch(
     if parallel_threads > 0:
         omp_set_num_threads(parallel_threads)
 
-    # Dispatch based on dtype
+    # Dispatch based on dtype - ensure C-contiguous memory layout
     if data.dtype == np.uint8:
-        data_u8 = np.asarray(data, dtype=np.uint8)
+        data_u8 = np.ascontiguousarray(data, dtype=np.uint8)
         output_u8 = np.empty((out_d, out_h, out_w), dtype=np.uint8)
         data_ptr_u8 = <uint8_t*>cnp.PyArray_DATA(data_u8)
         output_ptr_u8 = <uint8_t*>cnp.PyArray_DATA(output_u8)
@@ -73,7 +73,7 @@ cdef object _resample_nearest_dispatch(
         return output_u8
     
     elif data.dtype == np.int16:
-        data_i16 = np.asarray(data, dtype=np.int16)
+        data_i16 = np.ascontiguousarray(data, dtype=np.int16)
         output_i16 = np.empty((out_d, out_h, out_w), dtype=np.int16)
         data_ptr_i16 = <int16_t*>cnp.PyArray_DATA(data_i16)
         output_ptr_i16 = <int16_t*>cnp.PyArray_DATA(output_i16)
@@ -84,7 +84,7 @@ cdef object _resample_nearest_dispatch(
         return output_i16
     
     else:  # float32
-        data_f32 = np.asarray(data, dtype=np.float32)
+        data_f32 = np.ascontiguousarray(data, dtype=np.float32)
         output_f32 = np.empty((out_d, out_h, out_w), dtype=np.float32)
         data_ptr_f32 = <float*>cnp.PyArray_DATA(data_f32)
         output_ptr_f32 = <float*>cnp.PyArray_DATA(output_f32)
@@ -130,8 +130,8 @@ def resample(
     if parallel_threads > 0:
         omp_set_num_threads(parallel_threads)
     
-    # Ensure numpy array
-    data_np = np.asarray(data)
+    # Ensure numpy array with C-contiguous memory layout
+    data_np = np.ascontiguousarray(data)
     
     if data_np.ndim not in (3, 4):
         raise ValueError(f"Data must be 3D or 4D, got {data_np.ndim}D")
@@ -178,8 +178,8 @@ cdef object _resample_channel(
         return _resample_nearest_dispatch(data, size, mode, parallel_threads)
     
     elif mode == "linear":
-        # Linear always uses float32
-        data_f32 = np.asarray(data, dtype=np.float32)
+        # Linear always uses float32, ensure C-contiguous
+        data_f32 = np.ascontiguousarray(data, dtype=np.float32)
         output = np.empty((out_d, out_h, out_w), dtype=np.float32)
         data_ptr = <float*>cnp.PyArray_DATA(data_f32)
         output_ptr = <float*>cnp.PyArray_DATA(output)
@@ -190,22 +190,17 @@ cdef object _resample_channel(
         return output
     
     elif mode == "area":
-        # Area mode only works for downsampling (scale >= 1.0)
-        # For upsampling, fall back to nearest neighbor
-        if scale_d >= 1.0 and scale_h >= 1.0 and scale_w >= 1.0:
-            # Area averaging for downsampling
-            data_f32 = np.asarray(data, dtype=np.float32)
-            output = np.empty((out_d, out_h, out_w), dtype=np.float32)
-            data_ptr = <float*>cnp.PyArray_DATA(data_f32)
-            output_ptr = <float*>cnp.PyArray_DATA(output)
-            
-            # Release GIL for parallel execution
-            with nogil:
-                _resample_area(data_ptr, output_ptr, in_d, in_h, in_w, out_d, out_h, out_w, scale_d, scale_h, scale_w)
-            return output
-        else:
-            # Upsampling: fall back to nearest neighbor
-            return _resample_nearest_dispatch(data, size, "nearest", parallel_threads)
+        # Area mode: handles both downsampling (averaging) and upsampling (replication)
+        # per-dimension independently, matching PyTorch's F.interpolate behavior
+        data_f32 = np.ascontiguousarray(data, dtype=np.float32)
+        output = np.empty((out_d, out_h, out_w), dtype=np.float32)
+        data_ptr = <float*>cnp.PyArray_DATA(data_f32)
+        output_ptr = <float*>cnp.PyArray_DATA(output)
+        
+        # Release GIL for parallel execution
+        with nogil:
+            _resample_area(data_ptr, output_ptr, in_d, in_h, in_w, out_d, out_h, out_w, scale_d, scale_h, scale_w)
+        return output
     
     else:
         raise ValueError(f"Unsupported mode: {mode}. Use 'nearest', 'linear', or 'area'.")
@@ -242,8 +237,9 @@ def grid_sample(
         >>> output.shape
         (1, 2, 24, 24, 24)
     """
-    cdef cnp.ndarray input_np = np.asarray(input, dtype=np.float32)
-    cdef cnp.ndarray grid_np = np.asarray(grid, dtype=np.float32)
+    # Ensure C-contiguous memory layout for both input and grid
+    cdef cnp.ndarray input_np = np.ascontiguousarray(input, dtype=np.float32)
+    cdef cnp.ndarray grid_np = np.ascontiguousarray(grid, dtype=np.float32)
     
     if input_np.ndim != 5:
         raise ValueError(f"Input must be 5D (N, C, D, H, W), got {input_np.ndim}D")
