@@ -416,6 +416,10 @@ def main():
         ((512, 512, 512), (256, 256, 256), "3D Large 512→256 nearest", "nearest"),
         ((512, 512, 512), (256, 256, 256), "3D Large 512→256 linear", "linear"),
         ((512, 512, 512), (256, 256, 256), "3D Large 512→256 area", "area"),
+        
+        # Large with different dtypes
+        ((512, 512, 512), (256, 256, 256), "3D Large 512→256 nearest uint8", "nearest", np.uint8),
+        ((512, 512, 512), (256, 256, 256), "3D Large 512→256 nearest int16", "nearest", np.int16),
     ]
     
     print("\n" + "="*80)
@@ -423,8 +427,10 @@ def main():
     print("="*80)
     
     results = []
-    for input_shape, output_size, test_name, mode in test_cases:
-        result = run_benchmark(input_shape, output_size, test_name, mode, parallel_threads=parallel_threads, n_iterations=n_iterations)
+    for test_case in test_cases:
+        input_shape, output_size, test_name, mode = test_case[:4]
+        dtype = test_case[4] if len(test_case) > 4 else np.float32
+        result = run_benchmark(input_shape, output_size, test_name, mode, parallel_threads=parallel_threads, dtype=dtype, n_iterations=n_iterations)
         if result is not None:
             results.append(result)
     
