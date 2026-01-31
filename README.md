@@ -167,7 +167,6 @@ pytest tests/ -v
 pytest tests/ --skip-torch
 ```
 
-See [TESTING.md](TESTING.md) for the full testing guide.
 
 ### Running Benchmarks
 
