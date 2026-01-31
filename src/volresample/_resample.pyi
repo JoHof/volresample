@@ -53,7 +53,6 @@ def grid_sample(
     grid: NDArray[np.float32],
     mode: Literal["bilinear", "nearest"] = "bilinear",
     padding_mode: Literal["zeros", "border", "reflection"] = "zeros",
-    align_corners: bool = False,
 ) -> NDArray[np.float32]:
     """Sample input at arbitrary locations specified by a grid.
 
@@ -71,12 +70,12 @@ def grid_sample(
             - 'zeros': Use 0 for out-of-bounds samples
             - 'border': Use border values for out-of-bounds samples
             - 'reflection': Reflect coordinates at boundaries
-        align_corners: If True, corner pixels are aligned. Default False.
 
     Returns:
         Sampled array of shape (N, C, D_out, H_out, W_out).
         
     Note:
+        The behavior matches PyTorch's grid_sample with align_corners=False.
         Thread count is controlled globally via volresample.set_num_threads().
         Default is min(cpu_count, 4).
 

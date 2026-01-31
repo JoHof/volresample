@@ -221,7 +221,6 @@ def grid_sample(
     grid,
     str mode="bilinear",
     str padding_mode="zeros",
-    bint align_corners=False
 ):
     """Sample input using a sampling grid (similar to PyTorch's grid_sample).
     
@@ -231,12 +230,12 @@ def grid_sample(
               Values in range [-1, 1] where -1 is the start and 1 is the end.
         mode: Interpolation mode - 'bilinear' or 'nearest'.
         padding_mode: Padding mode for out-of-bounds values - 'zeros', 'border', 'reflection'.
-        align_corners: If True, corner pixels are aligned (default False).
         
     Returns:
         Sampled array of shape (N, C, D_out, H_out, W_out).
         
     Note:
+        The behavior matches PyTorch's grid_sample with align_corners=False.
         Thread count is controlled globally via volresample.set_num_threads().
         Default is min(cpu_count, 4).
         

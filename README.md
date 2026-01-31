@@ -116,7 +116,7 @@ volresample does not expose an `align_corners` parameter. The behavior matches P
 - `uint8`, `int16`: Only with `mode='nearest'`
 - `float32`: All modes
 
-### `grid_sample(input, grid, mode='bilinear', padding_mode='zeros', align_corners=False)`
+### `grid_sample(input, grid, mode='bilinear', padding_mode='zeros')`
 
 Sample input at arbitrary locations specified by a grid.
 
@@ -126,7 +126,8 @@ Sample input at arbitrary locations specified by a grid.
   - Values in range `[-1, 1]` where -1 maps to the first voxel, 1 to the last
 - `mode` (str): `'nearest'` or `'bilinear'`
 - `padding_mode` (str): `'zeros'`, `'border'`, or `'reflection'`
-- `align_corners` (bool): Whether to align corner pixels (default: False)
+
+The behavior matches PyTorch's `grid_sample` with `align_corners=False`.
 
 **Returns:**
 - Sampled array of shape `(N, C, D_out, H_out, W_out)`
