@@ -65,8 +65,8 @@ input = np.random.rand(2, 3, 32, 32, 32).astype(np.float32)
 # Sampling grid with normalized coordinates in [-1, 1]
 grid = np.random.uniform(-1, 1, (2, 24, 24, 24, 3)).astype(np.float32)
 
-# Sample with bilinear interpolation
-output = volresample.grid_sample(input, grid, mode='bilinear', padding_mode='zeros')
+# Sample with linear interpolation
+output = volresample.grid_sample(input, grid, mode='linear', padding_mode='zeros')
 print(output.shape)  # (2, 3, 24, 24, 24)
 ```
 
@@ -116,7 +116,7 @@ volresample does not expose an `align_corners` parameter. The behavior matches P
 - `uint8`, `int16`: Only with `mode='nearest'`
 - `float32`: All modes
 
-### `grid_sample(input, grid, mode='bilinear', padding_mode='zeros')`
+### `grid_sample(input, grid, mode='linear', padding_mode='zeros')`
 
 Sample input at arbitrary locations specified by a grid.
 
@@ -124,8 +124,15 @@ Sample input at arbitrary locations specified by a grid.
 - `input` (ndarray): Input volume of shape `(N, C, D, H, W)`
 - `grid` (ndarray): Sampling grid of shape `(N, D_out, H_out, W_out, 3)`
   - Values in range `[-1, 1]` where -1 maps to the first voxel, 1 to the last
-- `mode` (str): `'nearest'` or `'bilinear'`
+- `mode` (str): `'nearest'` or `'linear'`
 - `padding_mode` (str): `'zeros'`, `'border'`, or `'reflection'`
+
+**PyTorch correspondence:**
+
+| volresample | PyTorch `F.grid_sample` |
+|-------------|-------------------------|
+| `mode='nearest'` | `mode='nearest'` |
+| `mode='linear'` | `mode='bilinear'` |
 
 The behavior matches PyTorch's `grid_sample` with `align_corners=False`.
 

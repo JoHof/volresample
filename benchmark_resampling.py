@@ -128,7 +128,7 @@ def benchmark_grid_sample(
         grid_sample_func: Grid sample function to call
         input_data: Input data (N, C, D, H, W)
         grid: Grid for sampling (N, D_out, H_out, W_out, 3)
-        mode: Interpolation mode ('bilinear' or 'nearest')
+        mode: Interpolation mode ('linear' or 'nearest')
         padding_mode: Padding mode ('zeros', 'border', 'reflection')
         n_warmup: Number of warmup iterations
         n_iterations: Number of timed iterations
@@ -252,7 +252,7 @@ def run_grid_sample_benchmark(
     input_shape: Tuple[int, ...],
     output_shape: Tuple[int, ...],
     test_name: str,
-    mode: str = "bilinear",
+    mode: str = "linear",
     padding_mode: str = "zeros",
     n_iterations: int = 5,
 ) -> Optional[Dict[str, any]]:
@@ -262,7 +262,7 @@ def run_grid_sample_benchmark(
         input_shape: Shape of input data (N, C, D, H, W)
         output_shape: Shape of output (N, D_out, H_out, W_out, 3)
         test_name: Name for this test
-        mode: Interpolation mode ('bilinear' or 'nearest')
+        mode: Interpolation mode ('linear' or 'nearest')
         padding_mode: Padding mode ('zeros', 'border', 'reflection')
         
     Returns:
@@ -423,11 +423,11 @@ def main():
     grid_sample_tests = [
         # Small 3D grid sample - both modes
         ((1, 2, 32, 32, 32), (1, 24, 24, 24, 3), "Grid Sample 3D Small nearest", "nearest", "zeros"),
-        ((1, 2, 32, 32, 32), (1, 24, 24, 24, 3), "Grid Sample 3D Small bilinear", "bilinear", "zeros"),
+        ((1, 2, 32, 32, 32), (1, 24, 24, 24, 3), "Grid Sample 3D Small linear", "linear", "zeros"),
         
         # Large 3D grid sample - both modes
         ((1, 2, 128, 128, 128), (1, 96, 96, 96, 3), "Grid Sample 3D Large nearest", "nearest", "zeros"),
-        ((1, 2, 128, 128, 128), (1, 96, 96, 96, 3), "Grid Sample 3D Large bilinear", "bilinear", "zeros"),
+        ((1, 2, 128, 128, 128), (1, 96, 96, 96, 3), "Grid Sample 3D Large linear", "linear", "zeros"),
     ]
     
     grid_results = []

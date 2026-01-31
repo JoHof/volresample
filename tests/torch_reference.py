@@ -121,7 +121,7 @@ class TorchReference:
     def grid_sample(
         input: Any,  # torch.Tensor or np.ndarray
         grid: Any,  # torch.Tensor or np.ndarray
-        mode: str = "bilinear",
+        mode: str = "linear",
         padding_mode: str = "zeros",
         align_corners: bool = False,
     ) -> Any:
@@ -131,7 +131,8 @@ class TorchReference:
             input: Input tensor/array of shape (N, C, D, H, W).
             grid: Sampling grid of shape (N, D_out, H_out, W_out, 3).
                   Values should be normalized to [-1, 1] range.
-            mode: Interpolation mode: 'bilinear' or 'nearest'.
+            mode: Interpolation mode: 'linear' or 'nearest'.
+                  ('bilinear' is also accepted for backwards compatibility)
             padding_mode: Padding mode for outside grid values:
                          'zeros', 'border', or 'reflection'.
             align_corners: If True, corner pixels are aligned.
@@ -152,9 +153,12 @@ class TorchReference:
             input_t = input.float()
             grid_t = grid.float()
 
+        # Convert mode to PyTorch's naming: 'linear' -> 'bilinear'
+        torch_mode = "bilinear" if mode in ("linear", "bilinear") else mode
+
         # PyTorch grid_sample expects grid values in range [-1, 1]
         output_t = F.grid_sample(
-            input_t, grid_t, mode=mode, padding_mode=padding_mode, align_corners=align_corners
+            input_t, grid_t, mode=torch_mode, padding_mode=padding_mode, align_corners=align_corners
         )
 
         if was_numpy:

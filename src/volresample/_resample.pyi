@@ -51,7 +51,7 @@ def resample(
 def grid_sample(
     input: NDArray[np.float32],
     grid: NDArray[np.float32],
-    mode: Literal["bilinear", "nearest"] = "bilinear",
+    mode: Literal["linear", "nearest"] = "linear",
     padding_mode: Literal["zeros", "border", "reflection"] = "zeros",
 ) -> NDArray[np.float32]:
     """Sample input at arbitrary locations specified by a grid.
@@ -64,7 +64,7 @@ def grid_sample(
             Values in range [-1, 1] where -1 maps to the first voxel
             and 1 maps to the last voxel.
         mode: Interpolation mode:
-            - 'bilinear': Trilinear interpolation
+            - 'linear': Trilinear interpolation
             - 'nearest': Nearest neighbor
         padding_mode: How to handle out-of-bounds grid values:
             - 'zeros': Use 0 for out-of-bounds samples
@@ -84,7 +84,7 @@ def grid_sample(
         >>> import volresample
         >>> input = np.random.rand(1, 2, 32, 32, 32).astype(np.float32)
         >>> grid = np.random.uniform(-1, 1, (1, 24, 24, 24, 3)).astype(np.float32)
-        >>> output = volresample.grid_sample(input, grid, mode='bilinear')
+        >>> output = volresample.grid_sample(input, grid, mode='linear')
         >>> output.shape
         (1, 2, 24, 24, 24)
     """

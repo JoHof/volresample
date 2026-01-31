@@ -219,7 +219,7 @@ cdef object _resample_channel(
 def grid_sample(
     input,
     grid,
-    str mode="bilinear",
+    str mode="linear",
     str padding_mode="zeros",
 ):
     """Sample input using a sampling grid (similar to PyTorch's grid_sample).
@@ -228,7 +228,7 @@ def grid_sample(
         input: Input array, shape (N, C, D, H, W).
         grid: Sampling grid, shape (N, D_out, H_out, W_out, 3).
               Values in range [-1, 1] where -1 is the start and 1 is the end.
-        mode: Interpolation mode - 'bilinear' or 'nearest'.
+        mode: Interpolation mode - 'linear' or 'nearest'.
         padding_mode: Padding mode for out-of-bounds values - 'zeros', 'border', 'reflection'.
         
     Returns:
@@ -244,7 +244,7 @@ def grid_sample(
         >>> import volresample
         >>> input = np.random.rand(1, 2, 32, 32, 32).astype(np.float32)
         >>> grid = np.random.uniform(-1, 1, (1, 24, 24, 24, 3)).astype(np.float32)
-        >>> output = volresample.grid_sample(input, grid, mode='bilinear')
+        >>> output = volresample.grid_sample(input, grid, mode='linear')
         >>> output.shape
         (1, 2, 24, 24, 24)
     """
@@ -277,8 +277,12 @@ def grid_sample(
     _apply_thread_settings()
     
     # Determine which grid_sample function to call
-    cdef int mode_id = 0 if mode == "nearest" else 1  # 0=nearest, 1=bilinear
+    # Accept both 'linear' and 'bilinear' for compatibility
+    cdef bint use_linear = (mode == "linear" or mode == "bilinear")
     cdef int padding_id = 0  # 0=zeros, 1=border, 2=reflection
+    
+    if mode not in ("nearest", "linear", "bilinear"):
+        raise ValueError(f"Unsupported mode: {mode}. Use 'nearest' or 'linear'.")
     
     if padding_mode == "zeros":
         padding_id = 0
@@ -308,7 +312,7 @@ def grid_sample(
             with nogil:
                 _grid_sample_nearest_reflection(input_ptr, grid_ptr, output_ptr,
                                               N, C, in_d, in_h, in_w, out_d, out_h, out_w)
-    else:  # bilinear
+    else:  # linear (or bilinear for compatibility)
         if padding_mode == "zeros":
             with nogil:
                 _grid_sample_bilinear_zeros(input_ptr, grid_ptr, output_ptr,
