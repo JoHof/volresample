@@ -11,6 +11,7 @@
       let
         pkgs = import nixpkgs { inherit system;
                                 config.allowUnfree = true; };
+        python = pkgs.python312;
       in {
         devShells.default = pkgs.mkShell {
           name = "uv-dev-shell";

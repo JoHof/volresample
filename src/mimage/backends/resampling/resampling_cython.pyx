@@ -11,609 +11,328 @@ from cython.parallel import prange
 from libc.math cimport floor, ceil
 from libc.stdlib cimport malloc, free
 
+cdef extern from "omp.h":
+    int omp_set_num_threads(int)
+
 cnp.import_array()
 
+# Include the implementation files directly
+include "cython_src/utils.pyx"
+include "cython_src/nearest.pyx"
+include "cython_src/linear.pyx"
+include "cython_src/area.pyx"
+include "cython_src/grid_sample.pyx"
 
-cdef inline float clip(float val, float min_val, float max_val) nogil:
-    """Clip value to [min_val, max_val]."""
-    if val < min_val:
-        return min_val
-    if val > max_val:
-        return max_val
-    return val
-
-
-cdef inline void nearest_sample(
-    float* data,
-    int in_d, int in_h, int in_w,
-    float d, float h, float w,
-    float* result
-) noexcept nogil:
-    """Sample single value using nearest neighbor interpolation.
-    
-    Args:
-        data: Input data pointer (contiguous C-order array)
-        in_d, in_h, in_w: Input dimensions
-        d, h, w: Floating-point coordinates to sample
-        result: Output pointer (single float value)
-    """
-    # Round to nearest integer coordinates
-    cdef int d_idx = <int>(d + 0.5)
-    cdef int h_idx = <int>(h + 0.5)
-    cdef int w_idx = <int>(w + 0.5)
-    
-    # Clip to valid range
-    d_idx = <int>clip(d_idx, 0, in_d - 1)
-    h_idx = <int>clip(h_idx, 0, in_h - 1)
-    w_idx = <int>clip(w_idx, 0, in_w - 1)
-    
-    # Get value at nearest location
-    cdef int idx = d_idx * in_h * in_w + h_idx * in_w + w_idx
-    result[0] = data[idx]
-
-
-
-
-def resample_3d(
-    cnp.ndarray[cnp.float32_t, ndim=3] data,
+# Dispatch wrappers for dtype support in nearest neighbor
+cdef object _resample_nearest_dispatch(
+    object data,
     tuple size,
-    str mode = "linear"
+    str mode="nearest",
+    int parallel_threads=0
 ):
-    """Resample 3D volume using specified interpolation mode.
-    
-    Args:
-        data: Input array of shape (D, H, W), float32
-        size: Target size (new_D, new_H, new_W)
-        mode: Interpolation mode: 'nearest', 'linear', or 'area'
-        
-    Returns:
-        Resampled array of shape (new_D, new_H, new_W), float32
-    """
+    """Dispatch nearest neighbor resampling based on input dtype."""
     cdef int in_d = data.shape[0]
     cdef int in_h = data.shape[1]
     cdef int in_w = data.shape[2]
-    
     cdef int out_d = size[0]
     cdef int out_h = size[1]
     cdef int out_w = size[2]
-    
-    # Create output array
-    cdef cnp.ndarray[cnp.float32_t, ndim=3] output = np.empty(
-        (out_d, out_h, out_w), dtype=np.float32
-    )
-    
-    # Compute scale factors (PyTorch F.interpolate behavior)
+
     cdef float scale_d = <float>in_d / <float>out_d
     cdef float scale_h = <float>in_h / <float>out_h
     cdef float scale_w = <float>in_w / <float>out_w
     
-    cdef int od, oh, ow
-    cdef float src_d, src_h, src_w
-    cdef float* data_ptr = <float*>cnp.PyArray_DATA(data)
-    cdef float* output_ptr = <float*>cnp.PyArray_DATA(output)
-    cdef int idx_out, idx_in
-    cdef int d_idx, h_idx, w_idx, d1_idx, h1_idx, w1_idx
-    cdef int idx000, idx001, idx010, idx011, idx100, idx101, idx110, idx111
-    cdef float d_floor, h_floor, w_floor
-    cdef float fd, fh, fw, fd1, fh1, fw1
-    cdef float v000, v001, v010, v011, v100, v101, v110, v111
-    cdef float interp_w00, interp_w01, interp_w10, interp_w11, interp_h0, interp_h1
+    cdef cnp.ndarray[cnp.uint8_t, ndim=3] data_u8
+    cdef cnp.ndarray[cnp.uint8_t, ndim=3] output_u8
+    cdef uint8_t* data_ptr_u8
+    cdef uint8_t* output_ptr_u8
     
-    if mode == "nearest":
-        # Nearest neighbor interpolation - OPTIMIZED: inlined for performance
-        for od in prange(out_d, nogil=True, schedule='static'):
-            src_d = (od + 0.5) * scale_d - 0.5
-            # Compute and clamp d index once per depth slice
-            d_idx = <int>(src_d + 0.5)
-            if d_idx < 0:
-                d_idx = 0
-            elif d_idx >= in_d:
-                d_idx = in_d - 1
-                
-            for oh in range(out_h):
-                src_h = (oh + 0.5) * scale_h - 0.5
-                # Compute and clamp h index once per row
-                h_idx = <int>(src_h + 0.5)
-                if h_idx < 0:
-                    h_idx = 0
-                elif h_idx >= in_h:
-                    h_idx = in_h - 1
-                    
-                for ow in range(out_w):
-                    src_w = (ow + 0.5) * scale_w - 0.5
-                    # Compute and clamp w index
-                    w_idx = <int>(src_w + 0.5)
-                    if w_idx < 0:
-                        w_idx = 0
-                    elif w_idx >= in_w:
-                        w_idx = in_w - 1
-                    
-                    # Direct memory access - no function call
-                    idx_in = d_idx * in_h * in_w + h_idx * in_w + w_idx
-                    idx_out = od * out_h * out_w + oh * out_w + ow
-                    output_ptr[idx_out] = data_ptr[idx_in]
+    cdef cnp.ndarray[cnp.int16_t, ndim=3] data_i16
+    cdef cnp.ndarray[cnp.int16_t, ndim=3] output_i16
+    cdef int16_t* data_ptr_i16
+    cdef int16_t* output_ptr_i16
     
-    elif mode == "linear":
-        # Trilinear interpolation - OPTIMIZED: inlined for performance
-        for od in prange(out_d, nogil=True, schedule='static'):
-            src_d = (od + 0.5) * scale_d - 0.5
-            for oh in range(out_h):
-                src_h = (oh + 0.5) * scale_h - 0.5
-                for ow in range(out_w):
-                    src_w = (ow + 0.5) * scale_w - 0.5
-                    
-                    # Compute integer coordinates (C floor, nogil safe)
-                    d_floor = floor(src_d)
-                    h_floor = floor(src_h)
-                    w_floor = floor(src_w)
-                    
-                    d_idx = <int>d_floor
-                    h_idx = <int>h_floor
-                    w_idx = <int>w_floor
-                    
-                    d1_idx = d_idx + 1
-                    h1_idx = h_idx + 1
-                    w1_idx = w_idx + 1
-                    
-                    # Clamp to valid range (inline clip)
-                    if d_idx < 0: d_idx = 0
-                    elif d_idx >= in_d: d_idx = in_d - 1
-                    if d1_idx < 0: d1_idx = 0
-                    elif d1_idx >= in_d: d1_idx = in_d - 1
-                    
-                    if h_idx < 0: h_idx = 0
-                    elif h_idx >= in_h: h_idx = in_h - 1
-                    if h1_idx < 0: h1_idx = 0
-                    elif h1_idx >= in_h: h1_idx = in_h - 1
-                    
-                    if w_idx < 0: w_idx = 0
-                    elif w_idx >= in_w: w_idx = in_w - 1
-                    if w1_idx < 0: w1_idx = 0
-                    elif w1_idx >= in_w: w1_idx = in_w - 1
-                    
-                    # Compute fractional parts (reuse floor results)
-                    fd = src_d - d_floor
-                    fh = src_h - h_floor
-                    fw = src_w - w_floor
-                    
-                    # Complementary weights
-                    fd1 = 1.0 - fd
-                    fh1 = 1.0 - fh
-                    fw1 = 1.0 - fw
-                    
-                    # Compute 8 corner indices
-                    idx000 = d_idx * in_h * in_w + h_idx * in_w + w_idx
-                    idx001 = d_idx * in_h * in_w + h_idx * in_w + w1_idx
-                    idx010 = d_idx * in_h * in_w + h1_idx * in_w + w_idx
-                    idx011 = d_idx * in_h * in_w + h1_idx * in_w + w1_idx
-                    idx100 = d1_idx * in_h * in_w + h_idx * in_w + w_idx
-                    idx101 = d1_idx * in_h * in_w + h_idx * in_w + w1_idx
-                    idx110 = d1_idx * in_h * in_w + h1_idx * in_w + w_idx
-                    idx111 = d1_idx * in_h * in_w + h1_idx * in_w + w1_idx
-                    
-                    # Fetch 8 corner values
-                    v000 = data_ptr[idx000]
-                    v001 = data_ptr[idx001]
-                    v010 = data_ptr[idx010]
-                    v011 = data_ptr[idx011]
-                    v100 = data_ptr[idx100]
-                    v101 = data_ptr[idx101]
-                    v110 = data_ptr[idx110]
-                    v111 = data_ptr[idx111]
-                    
-                    # Trilinear interpolation
-                    interp_w00 = v000 * fw1 + v001 * fw
-                    interp_w01 = v010 * fw1 + v011 * fw
-                    interp_w10 = v100 * fw1 + v101 * fw
-                    interp_w11 = v110 * fw1 + v111 * fw
-                    
-                    interp_h0 = interp_w00 * fh1 + interp_w01 * fh
-                    interp_h1 = interp_w10 * fh1 + interp_w11 * fh
-                    
-                    idx_out = od * out_h * out_w + oh * out_w + ow
-                    output_ptr[idx_out] = interp_h0 * fd1 + interp_h1 * fd
-    
-    elif mode == "area":
-        # Area interpolation (adaptive averaging for downsampling)
-        # For upsampling, falls back to nearest (matching PyTorch behavior)
-        if scale_d >= 1.0 and scale_h >= 1.0 and scale_w >= 1.0:
-            # Downsampling: use area averaging
-            output = _resample_area_3d(data, size, scale_d, scale_h, scale_w)
-        else:
-            # Upsampling: fall back to nearest (PyTorch's behavior)
-            for od in prange(out_d, nogil=True, schedule='static'):
-                src_d = (od + 0.5) * scale_d - 0.5
-                for oh in range(out_h):
-                    src_h = (oh + 0.5) * scale_h - 0.5
-                    for ow in range(out_w):
-                        src_w = (ow + 0.5) * scale_w - 0.5
-                        
-                        idx_out = od * out_h * out_w + oh * out_w + ow
-                        
-                        nearest_sample(
-                            data_ptr, in_d, in_h, in_w,
-                            src_d, src_h, src_w,
-                            &output_ptr[idx_out]
-                        )
-    else:
-        raise ValueError(f"Unsupported mode: {mode}")
-    
-    return output
+    cdef cnp.ndarray[cnp.float32_t, ndim=3] data_f32
+    cdef cnp.ndarray[cnp.float32_t, ndim=3] output_f32
+    cdef float* data_ptr_f32
+    cdef float* output_ptr_f32
 
+    if parallel_threads > 0:
+        omp_set_num_threads(parallel_threads)
 
-def resample_4d(
-    cnp.ndarray[cnp.float32_t, ndim=4] data,
+    # Dispatch based on dtype
+    if data.dtype == np.uint8:
+        data_u8 = np.asarray(data, dtype=np.uint8)
+        output_u8 = np.empty((out_d, out_h, out_w), dtype=np.uint8)
+        data_ptr_u8 = <uint8_t*>cnp.PyArray_DATA(data_u8)
+        output_ptr_u8 = <uint8_t*>cnp.PyArray_DATA(output_u8)
+        _resample_nearest(data_ptr_u8, output_ptr_u8, in_d, in_h, in_w, out_d, out_h, out_w, scale_d, scale_h, scale_w)
+        return output_u8
+    
+    elif data.dtype == np.int16:
+        data_i16 = np.asarray(data, dtype=np.int16)
+        output_i16 = np.empty((out_d, out_h, out_w), dtype=np.int16)
+        data_ptr_i16 = <int16_t*>cnp.PyArray_DATA(data_i16)
+        output_ptr_i16 = <int16_t*>cnp.PyArray_DATA(output_i16)
+        _resample_nearest(data_ptr_i16, output_ptr_i16, in_d, in_h, in_w, out_d, out_h, out_w, scale_d, scale_h, scale_w)
+        return output_i16
+    
+    else:  # float32
+        data_f32 = np.asarray(data, dtype=np.float32)
+        output_f32 = np.empty((out_d, out_h, out_w), dtype=np.float32)
+        data_ptr_f32 = <float*>cnp.PyArray_DATA(data_f32)
+        output_ptr_f32 = <float*>cnp.PyArray_DATA(output_f32)
+        _resample_nearest(data_ptr_f32, output_ptr_f32, in_d, in_h, in_w, out_d, out_h, out_w, scale_d, scale_h, scale_w)
+        return output_f32
+
+def resample(
+    data,
     tuple size,
-    str mode = "linear"
+    str mode="linear",
+    int parallel_threads=0
 ):
-    """Resample 4D volume (C, D, H, W) using specified interpolation mode.
+    """Resample 3D or 4D volume using specified interpolation mode.
     
     Args:
-        data: Input array of shape (C, D, H, W), float32
-        size: Target size (new_D, new_H, new_W) for spatial dimensions
-        mode: Interpolation mode: 'nearest', 'linear', or 'area'
-        
+        data: Input array, shape (D, H, W) or (C, D, H, W). Supports uint8, int16, float32.
+        size: Output size (D, H, W).
+        mode: Interpolation mode - 'nearest', 'linear', 'area'.
+        parallel_threads: Number of threads (0 = default).
+    
     Returns:
-        Resampled array of shape (C, new_D, new_H, new_W), float32
+        Resampled array with same dtype as input (for nearest) or float32 (for linear/area).
+        Output shape matches input: (D, H, W) for 3D input, (C, D, H, W) for 4D input.
     """
-    cdef int n_channels = data.shape[0]
-    cdef int in_d = data.shape[1]
-    cdef int in_h = data.shape[2]
-    cdef int in_w = data.shape[3]
+    cdef int n_channels, c, in_d, in_h, in_w, out_d, out_h, out_w
+    cdef float scale_d, scale_h, scale_w
+    cdef Py_ssize_t in_channel_stride, out_channel_stride
+    cdef cnp.ndarray[cnp.float32_t, ndim=4] data_f32
+    cdef cnp.ndarray[cnp.float32_t, ndim=4] output
+    cdef float* data_ptr
+    cdef float* output_ptr
+    cdef list output_channels
+    cdef bint is_3d = data.ndim == 3
     
-    cdef int out_d = size[0]
-    cdef int out_h = size[1]
-    cdef int out_w = size[2]
+    # Handle 3D input by adding a channel dimension
+    if is_3d:
+        data = data[np.newaxis, ...]  # Add channel dimension: (D,H,W) -> (1,D,H,W)
     
-    # Create output array
-    cdef cnp.ndarray[cnp.float32_t, ndim=4] output = np.empty(
-        (n_channels, out_d, out_h, out_w), dtype=np.float32
-    )
+    # For nearest neighbor with uint8/int16, process per-channel
+    if mode == "nearest" and data.dtype in (np.uint8, np.int16):
+        n_channels = data.shape[0]
+        output_channels = []
+        for c in range(n_channels):
+            output_channels.append(_resample_nearest_dispatch(data[c], size, mode, parallel_threads))
+        output_result = np.stack(output_channels, axis=0)
+        # Remove channel dimension for 3D input
+        if is_3d:
+            return output_result[0]
+        return output_result
     
-    # Compute scale factors
-    cdef float scale_d = <float>in_d / <float>out_d
-    cdef float scale_h = <float>in_h / <float>out_h
-    cdef float scale_w = <float>in_w / <float>out_w
     
-    cdef int c, od, oh, ow
-    cdef float src_d, src_h, src_w
-    cdef int channel_size_in = in_d * in_h * in_w
-    cdef int channel_size_out = out_d * out_h * out_w
-    cdef int idx_out, idx_in, channel_in_offset, channel_out_offset
-    cdef int d_idx, h_idx, w_idx, d1_idx, h1_idx, w1_idx
-    cdef int idx000, idx001, idx010, idx011, idx100, idx101, idx110, idx111
-    cdef float d_floor, h_floor, w_floor
-    cdef float fd, fh, fw, fd1, fh1, fw1
-    cdef float v000, v001, v010, v011, v100, v101, v110, v111
-    cdef float interp_w00, interp_w01, interp_w10, interp_w11, interp_h0, interp_h1
-    cdef float* channel_data_ptr
-    # Tiling variables
-    cdef int tile_d, tile_h, tile_w, d_start, d_end, h_start, h_end, w_start, w_end
+    # Float32 path for all modes
+    data_f32 = np.asarray(data, dtype=np.float32)
     
-    cdef float* data_ptr = <float*>cnp.PyArray_DATA(data)
-    cdef float* output_ptr = <float*>cnp.PyArray_DATA(output)
-    
+    n_channels = data_f32.shape[0]
+    in_d = data_f32.shape[1]
+    in_h = data_f32.shape[2]
+    in_w = data_f32.shape[3]
+
+    out_d = size[0]
+    out_h = size[1]
+    out_w = size[2]
+
+    output = np.empty((n_channels, out_d, out_h, out_w), dtype=np.float32)
+
+    scale_d = <float>in_d / <float>out_d
+    scale_h = <float>in_h / <float>out_h
+    scale_w = <float>in_w / <float>out_w
+
+    in_channel_stride = in_d * in_h * in_w
+    out_channel_stride = out_d * out_h * out_w
+    data_ptr = <float*>cnp.PyArray_DATA(data_f32)
+    output_ptr = <float*>cnp.PyArray_DATA(output)
+
+    if parallel_threads > 0:
+        omp_set_num_threads(parallel_threads)
+
     if mode == "nearest":
-        # Nearest neighbor interpolation - OPTIMIZED: inlined for performance
-        for c in prange(n_channels, nogil=True, schedule='static'):
-            # Compute channel offsets ONCE per channel (not per voxel!)
-            channel_in_offset = c * channel_size_in
-            channel_out_offset = c * channel_size_out
-            
-            for od in range(out_d):
-                src_d = (od + 0.5) * scale_d - 0.5
-                # Compute and clamp d index once per depth slice
-                d_idx = <int>(src_d + 0.5)
-                if d_idx < 0:
-                    d_idx = 0
-                elif d_idx >= in_d:
-                    d_idx = in_d - 1
-                    
-                for oh in range(out_h):
-                    src_h = (oh + 0.5) * scale_h - 0.5
-                    # Compute and clamp h index once per row
-                    h_idx = <int>(src_h + 0.5)
-                    if h_idx < 0:
-                        h_idx = 0
-                    elif h_idx >= in_h:
-                        h_idx = in_h - 1
-                        
-                    for ow in range(out_w):
-                        src_w = (ow + 0.5) * scale_w - 0.5
-                        # Compute and clamp w index
-                        w_idx = <int>(src_w + 0.5)
-                        if w_idx < 0:
-                            w_idx = 0
-                        elif w_idx >= in_w:
-                            w_idx = in_w - 1
-                        
-                        # Direct memory access - no function call
-                        idx_in = d_idx * in_h * in_w + h_idx * in_w + w_idx
-                        idx_out = channel_out_offset + od * out_h * out_w + oh * out_w + ow
-                        output_ptr[idx_out] = data_ptr[channel_in_offset + idx_in]
-    
+        for c in range(n_channels):
+            _resample_nearest(
+                data_ptr + c * in_channel_stride,
+                output_ptr + c * out_channel_stride,
+                in_d, in_h, in_w, out_d, out_h, out_w,
+                scale_d, scale_h, scale_w
+            )
     elif mode == "linear":
-        # Trilinear interpolation - OPTIMIZED: inlined for performance
-        for c in prange(n_channels, nogil=True, schedule='static'):
-            # Compute channel offset ONCE per channel (not per voxel!)
-            channel_data_ptr = data_ptr + c * channel_size_in
-            channel_out_offset = c * channel_size_out
-            
-            for od in range(out_d):
-                src_d = (od + 0.5) * scale_d - 0.5
-                d_floor = floor(src_d)
-                d_idx = <int>d_floor
-                d1_idx = d_idx + 1
-                
-                # Clamp D indices once per depth slice
-                if d_idx < 0: d_idx = 0
-                elif d_idx >= in_d: d_idx = in_d - 1
-                if d1_idx < 0: d1_idx = 0
-                elif d1_idx >= in_d: d1_idx = in_d - 1
-                
-                fd = src_d - d_floor
-                fd1 = 1.0 - fd
-                
-                for oh in range(out_h):
-                    src_h = (oh + 0.5) * scale_h - 0.5
-                    h_floor = floor(src_h)
-                    h_idx = <int>h_floor
-                    h1_idx = h_idx + 1
-                    
-                    # Clamp H indices once per row
-                    if h_idx < 0: h_idx = 0
-                    elif h_idx >= in_h: h_idx = in_h - 1
-                    if h1_idx < 0: h1_idx = 0
-                    elif h1_idx >= in_h: h1_idx = in_h - 1
-                    
-                    fh = src_h - h_floor
-                    fh1 = 1.0 - fh
-                    
-                    for ow in range(out_w):
-                        src_w = (ow + 0.5) * scale_w - 0.5
-                        w_floor = floor(src_w)
-                        w_idx = <int>w_floor
-                        w1_idx = w_idx + 1
-                        
-                        # Clamp W indices
-                        if w_idx < 0: w_idx = 0
-                        elif w_idx >= in_w: w_idx = in_w - 1
-                        if w1_idx < 0: w1_idx = 0
-                        elif w1_idx >= in_w: w1_idx = in_w - 1
-                        
-                        fw = src_w - w_floor
-                        fw1 = 1.0 - fw
-                        
-                        # Compute 8 corner indices
-                        idx000 = d_idx * in_h * in_w + h_idx * in_w + w_idx
-                        idx001 = d_idx * in_h * in_w + h_idx * in_w + w1_idx
-                        idx010 = d_idx * in_h * in_w + h1_idx * in_w + w_idx
-                        idx011 = d_idx * in_h * in_w + h1_idx * in_w + w1_idx
-                        idx100 = d1_idx * in_h * in_w + h_idx * in_w + w_idx
-                        idx101 = d1_idx * in_h * in_w + h_idx * in_w + w1_idx
-                        idx110 = d1_idx * in_h * in_w + h1_idx * in_w + w_idx
-                        idx111 = d1_idx * in_h * in_w + h1_idx * in_w + w1_idx
-                        
-                        # Fetch 8 corner values
-                        v000 = channel_data_ptr[idx000]
-                        v001 = channel_data_ptr[idx001]
-                        v010 = channel_data_ptr[idx010]
-                        v011 = channel_data_ptr[idx011]
-                        v100 = channel_data_ptr[idx100]
-                        v101 = channel_data_ptr[idx101]
-                        v110 = channel_data_ptr[idx110]
-                        v111 = channel_data_ptr[idx111]
-                        
-                        # Trilinear interpolation
-                        interp_w00 = v000 * fw1 + v001 * fw
-                        interp_w01 = v010 * fw1 + v011 * fw
-                        interp_w10 = v100 * fw1 + v101 * fw
-                        interp_w11 = v110 * fw1 + v111 * fw
-                        
-                        interp_h0 = interp_w00 * fh1 + interp_w01 * fh
-                        interp_h1 = interp_w10 * fh1 + interp_w11 * fh
-                        
-                        idx_out = channel_out_offset + od * out_h * out_w + oh * out_w + ow
-                        output_ptr[idx_out] = interp_h0 * fd1 + interp_h1 * fd
-    
+        for c in range(n_channels):
+            _resample_linear(
+                data_ptr + c * in_channel_stride,
+                output_ptr + c * out_channel_stride,
+                in_d, in_h, in_w, out_d, out_h, out_w,
+                scale_d, scale_h, scale_w
+            )
     elif mode == "area":
-        # Area interpolation per channel
         if scale_d >= 1.0 and scale_h >= 1.0 and scale_w >= 1.0:
-            # Downsampling: use OPTIMIZED parallel area averaging
-            _resample_area_4d(data_ptr, output_ptr, n_channels,
-                            in_d, in_h, in_w, out_d, out_h, out_w,
-                            scale_d, scale_h, scale_w)
+            for c in range(n_channels):
+                _resample_area(
+                    data_ptr + c * in_channel_stride,
+                    output_ptr + c * out_channel_stride,
+                    in_d, in_h, in_w, out_d, out_h, out_w,
+                    scale_d, scale_h, scale_w
+                )
         else:
-            # Upsampling: fall back to nearest (PyTorch's behavior)
-            for c in prange(n_channels, nogil=True, schedule='static'):
-                for od in range(out_d):
-                    src_d = (od + 0.5) * scale_d - 0.5
-                    for oh in range(out_h):
-                        src_h = (oh + 0.5) * scale_h - 0.5
-                        for ow in range(out_w):
-                            src_w = (ow + 0.5) * scale_w - 0.5
-                            
-                            idx_out = c * channel_size_out + od * out_h * out_w + oh * out_w + ow
-                            
-                            nearest_sample(
-                                data_ptr + c * channel_size_in,
-                                in_d, in_h, in_w,
-                                src_d, src_h, src_w,
-                                &output_ptr[idx_out]
-                            )
+            # Upsampling fallback to nearest
+            for c in range(n_channels):
+                _resample_nearest(
+                    data_ptr + c * in_channel_stride,
+                    output_ptr + c * out_channel_stride,
+                    in_d, in_h, in_w, out_d, out_h, out_w,
+                    scale_d, scale_h, scale_w
+                )
     else:
         raise ValueError(f"Unsupported mode: {mode}")
-    
+
+    # Remove channel dimension for 3D input
+    if is_3d:
+        return output[0]
     return output
 
 
-cdef void _resample_area_4d(
-    float* data_ptr,
-    float* output_ptr,
-    int n_channels,
-    int in_d, int in_h, int in_w,
-    int out_d, int out_h, int out_w,
-    float scale_d, float scale_h, float scale_w
-) noexcept nogil:
-    """Area interpolation matching PyTorch's implementation.
-    
-    Uses integer-bounded regions with uniform weights (no fractional weighting).
-    Regions can overlap at boundaries, matching PyTorch F.interpolate mode='area'.
-    
-    Algorithm:
-        For each output voxel at index (od, oh, ow):
-            d_start = floor(od * scale_d)
-            d_end = ceil((od + 1) * scale_d), clamped to in_d
-            Average inputs[d_start:d_end] with uniform weights
-    """
-    cdef int channel_size_in = in_d * in_h * in_w
-    cdef int channel_size_out = out_d * out_h * out_w
-    cdef int c, od, oh, ow, id, ih, iw
-    cdef int d_start_i, d_end_i, h_start_i, h_end_i, w_start_i, w_end_i
-    cdef int count_d, count_h, count_w, total_count
-    cdef float uniform_weight, value
-    cdef int idx_in_base, idx_out_base
-    cdef float* sum_vals
-    
-    # Process each output voxel (spatial dimensions in outer loops with parallelization)
-    for od in prange(out_d, nogil=True, schedule='static'):
-        # Allocate temporary array per-thread (inside prange)
-        sum_vals = <float*>malloc(n_channels * sizeof(float))
-        
-        # Compute integer bounds for D dimension (PyTorch-style)
-        d_start_i = <int>(od * scale_d)  # floor
-        d_end_i = <int>ceil((od + 1) * scale_d)  # ceil
-        if d_end_i > in_d:
-            d_end_i = in_d
-        count_d = d_end_i - d_start_i
-        
-        for oh in range(out_h):
-            # Compute integer bounds for H dimension
-            h_start_i = <int>(oh * scale_h)
-            h_end_i = <int>ceil((oh + 1) * scale_h)
-            if h_end_i > in_h:
-                h_end_i = in_h
-            count_h = h_end_i - h_start_i
-            
-            for ow in range(out_w):
-                # Compute integer bounds for W dimension
-                w_start_i = <int>(ow * scale_w)
-                w_end_i = <int>ceil((ow + 1) * scale_w)
-                if w_end_i > in_w:
-                    w_end_i = in_w
-                count_w = w_end_i - w_start_i
-                
-                # Total number of input voxels contributing to this output
-                total_count = count_d * count_h * count_w
-                uniform_weight = 1.0 / <float>total_count
-                
-                # Initialize accumulators for all channels
-                for c in range(n_channels):
-                    sum_vals[c] = 0.0
-                
-                # Sum over all contributing input voxels with uniform weights
-                for id in range(d_start_i, d_end_i):
-                    for ih in range(h_start_i, h_end_i):
-                        for iw in range(w_start_i, w_end_i):
-                            # Compute base spatial index (reused for all channels)
-                            idx_in_base = id * in_h * in_w + ih * in_w + iw
-                            
-                            # Process all channels with same spatial coordinates
-                            for c in range(n_channels):
-                                value = data_ptr[c * channel_size_in + idx_in_base]
-                                sum_vals[c] = sum_vals[c] + value * uniform_weight
-                
-                # Write results for all channels
-                for c in range(n_channels):
-                    idx_out_base = c * channel_size_out + od * out_h * out_w + oh * out_w + ow
-                    output_ptr[idx_out_base] = sum_vals[c]
-        
-        # Free per-thread allocation
-        free(sum_vals)
-
-
-def _resample_area_3d(
-    cnp.ndarray[cnp.float32_t, ndim=3] data,
-    tuple size,
-    float scale_d,
-    float scale_h,
-    float scale_w
+def grid_sample(
+    input_data,
+    grid,
+    str mode="bilinear",
+    str padding_mode="zeros",
+    int parallel_threads=0
 ):
-    """Area interpolation matching PyTorch's implementation.
+    """Grid sample operation matching PyTorch's F.grid_sample with align_corners=False.
     
-    Uses integer-bounded regions with uniform weights (no fractional weighting).
-    Regions can overlap at boundaries, matching PyTorch F.interpolate mode='area'.
+    Given an input and a flow-field grid, computes the output using input values
+    and pixel locations from grid.
     
     Args:
-        data: Input array of shape (D, H, W), float32
-        size: Target size (new_D, new_H, new_W)
-        scale_d, scale_h, scale_w: Scale factors
-        
+        input_data: Input array of shape (N, C, H, W) for 2D or (N, C, D, H, W) for 3D.
+        grid: Flow-field of shape (N, H_out, W_out, 2) for 2D or (N, D_out, H_out, W_out, 3) for 3D.
+              Values should be in the range [-1, 1], where -1 corresponds to the left/top/front
+              edge and 1 corresponds to the right/bottom/back edge (align_corners=False behavior).
+        mode: Interpolation mode - 'bilinear' (trilinear for 3D) or 'nearest'. Default: 'bilinear'.
+        padding_mode: Padding mode for out-of-bound grid values - 'zeros', 'border', or 'reflection'.
+                      Default: 'zeros'.
+        parallel_threads: Number of threads for parallel execution (0 = library default).
+    
     Returns:
-        Resampled array of shape (new_D, new_H, new_W), float32
+        Output array of shape (N, C, H_out, W_out) for 2D or (N, C, D_out, H_out, W_out) for 3D.
+    
+    Note:
+        This implementation uses align_corners=False (PyTorch default).
+        Grid coordinate x=-1 maps to the left edge of the leftmost pixel,
+        x=1 maps to the right edge of the rightmost pixel.
     """
-    cdef int in_d = data.shape[0]
-    cdef int in_h = data.shape[1]
-    cdef int in_w = data.shape[2]
+    cdef cnp.ndarray[cnp.float32_t, ndim=4] input_4d
+    cdef cnp.ndarray[cnp.float32_t, ndim=5] input_5d
+    cdef cnp.ndarray[cnp.float32_t, ndim=4] grid_4d
+    cdef cnp.ndarray[cnp.float32_t, ndim=5] grid_5d
+    cdef cnp.ndarray[cnp.float32_t, ndim=4] output_4d
+    cdef cnp.ndarray[cnp.float32_t, ndim=5] output_5d
+    cdef float* input_ptr
+    cdef float* grid_ptr
+    cdef float* output_ptr
+    cdef int N, C, D_in, H_in, W_in, D_out, H_out, W_out
     
-    cdef int out_d = size[0]
-    cdef int out_h = size[1]
-    cdef int out_w = size[2]
+    if mode not in ("bilinear", "nearest"):
+        raise ValueError(f"Unsupported mode: {mode}. Supported: 'bilinear', 'nearest'")
     
-    cdef cnp.ndarray[cnp.float32_t, ndim=3] output = np.zeros(
-        (out_d, out_h, out_w), dtype=np.float32
-    )
+    if padding_mode not in ("zeros", "border", "reflection"):
+        raise ValueError(f"Unsupported padding_mode: {padding_mode}. Supported: 'zeros', 'border', 'reflection'")
     
-    cdef float* data_ptr = <float*>cnp.PyArray_DATA(data)
-    cdef float* output_ptr = <float*>cnp.PyArray_DATA(output)
+    if parallel_threads > 0:
+        omp_set_num_threads(parallel_threads)
     
-    cdef int od, oh, ow, id, ih, iw
-    cdef int d_start_i, d_end_i, h_start_i, h_end_i, w_start_i, w_end_i
-    cdef int count_d, count_h, count_w, total_count
-    cdef float uniform_weight, value
-    cdef int idx_in, idx_out
-    cdef float sum_val
-    
-    # Process each output voxel
-    for od in prange(out_d, nogil=True, schedule='static'):
-        # Compute integer bounds for D dimension (PyTorch-style)
-        d_start_i = <int>(od * scale_d)  # floor
-        d_end_i = <int>ceil((od + 1) * scale_d)  # ceil
-        if d_end_i > in_d:
-            d_end_i = in_d
-        count_d = d_end_i - d_start_i
+    # Handle 4D input (2D spatial)
+    if input_data.ndim == 4:
+        if grid.ndim != 4 or grid.shape[3] != 2:
+            raise ValueError(f"For 4D input, grid must be 4D with shape (N, H_out, W_out, 2), got {grid.shape}")
         
-        for oh in range(out_h):
-            # Compute integer bounds for H dimension
-            h_start_i = <int>(oh * scale_h)
-            h_end_i = <int>ceil((oh + 1) * scale_h)
-            if h_end_i > in_h:
-                h_end_i = in_h
-            count_h = h_end_i - h_start_i
-            
-            for ow in range(out_w):
-                # Compute integer bounds for W dimension
-                w_start_i = <int>(ow * scale_w)
-                w_end_i = <int>ceil((ow + 1) * scale_w)
-                if w_end_i > in_w:
-                    w_end_i = in_w
-                count_w = w_end_i - w_start_i
-                
-                # Total number of input voxels contributing to this output
-                total_count = count_d * count_h * count_w
-                uniform_weight = 1.0 / <float>total_count
-                
-                sum_val = 0.0
-                
-                # Sum over all contributing input voxels with uniform weights
-                for id in range(d_start_i, d_end_i):
-                    for ih in range(h_start_i, h_end_i):
-                        for iw in range(w_start_i, w_end_i):
-                            idx_in = id * in_h * in_w + ih * in_w + iw
-                            value = data_ptr[idx_in]
-                            sum_val = sum_val + value * uniform_weight
-                
-                idx_out = od * out_h * out_w + oh * out_w + ow
-                output_ptr[idx_out] = sum_val
+        input_4d = np.ascontiguousarray(input_data, dtype=np.float32)
+        grid_4d = np.ascontiguousarray(grid, dtype=np.float32)
+        
+        N = input_4d.shape[0]
+        C = input_4d.shape[1]
+        H_in = input_4d.shape[2]
+        W_in = input_4d.shape[3]
+        H_out = grid_4d.shape[1]
+        W_out = grid_4d.shape[2]
+        
+        if grid_4d.shape[0] != N:
+            raise ValueError(f"Batch size mismatch: input has {N}, grid has {grid_4d.shape[0]}")
+        
+        output_4d = np.empty((N, C, H_out, W_out), dtype=np.float32)
+        
+        input_ptr = <float*>cnp.PyArray_DATA(input_4d)
+        grid_ptr = <float*>cnp.PyArray_DATA(grid_4d)
+        output_ptr = <float*>cnp.PyArray_DATA(output_4d)
+        
+        if mode == "bilinear":
+            if padding_mode == "zeros":
+                _grid_sample_2d_bilinear_zeros(input_ptr, grid_ptr, output_ptr, N, C, H_in, W_in, H_out, W_out)
+            elif padding_mode == "border":
+                _grid_sample_2d_bilinear_border(input_ptr, grid_ptr, output_ptr, N, C, H_in, W_in, H_out, W_out)
+            else:  # reflection
+                _grid_sample_2d_bilinear_reflection(input_ptr, grid_ptr, output_ptr, N, C, H_in, W_in, H_out, W_out)
+        else:  # nearest
+            if padding_mode == "zeros":
+                _grid_sample_2d_nearest_zeros(input_ptr, grid_ptr, output_ptr, N, C, H_in, W_in, H_out, W_out)
+            elif padding_mode == "border":
+                _grid_sample_2d_nearest_border(input_ptr, grid_ptr, output_ptr, N, C, H_in, W_in, H_out, W_out)
+            else:  # reflection
+                _grid_sample_2d_nearest_reflection(input_ptr, grid_ptr, output_ptr, N, C, H_in, W_in, H_out, W_out)
+        
+        return output_4d
     
-    return output
+    # Handle 5D input (3D spatial)
+    elif input_data.ndim == 5:
+        if grid.ndim != 5 or grid.shape[4] != 3:
+            raise ValueError(f"For 5D input, grid must be 5D with shape (N, D_out, H_out, W_out, 3), got {grid.shape}")
+        
+        input_5d = np.ascontiguousarray(input_data, dtype=np.float32)
+        grid_5d = np.ascontiguousarray(grid, dtype=np.float32)
+        
+        N = input_5d.shape[0]
+        C = input_5d.shape[1]
+        D_in = input_5d.shape[2]
+        H_in = input_5d.shape[3]
+        W_in = input_5d.shape[4]
+        D_out = grid_5d.shape[1]
+        H_out = grid_5d.shape[2]
+        W_out = grid_5d.shape[3]
+        
+        if grid_5d.shape[0] != N:
+            raise ValueError(f"Batch size mismatch: input has {N}, grid has {grid_5d.shape[0]}")
+        
+        output_5d = np.empty((N, C, D_out, H_out, W_out), dtype=np.float32)
+        
+        input_ptr = <float*>cnp.PyArray_DATA(input_5d)
+        grid_ptr = <float*>cnp.PyArray_DATA(grid_5d)
+        output_ptr = <float*>cnp.PyArray_DATA(output_5d)
+        
+        if mode == "bilinear":
+            if padding_mode == "zeros":
+                _grid_sample_bilinear_zeros(input_ptr, grid_ptr, output_ptr, N, C, D_in, H_in, W_in, D_out, H_out, W_out)
+            elif padding_mode == "border":
+                _grid_sample_bilinear_border(input_ptr, grid_ptr, output_ptr, N, C, D_in, H_in, W_in, D_out, H_out, W_out)
+            else:  # reflection
+                _grid_sample_bilinear_reflection(input_ptr, grid_ptr, output_ptr, N, C, D_in, H_in, W_in, D_out, H_out, W_out)
+        else:  # nearest
+            if padding_mode == "zeros":
+                _grid_sample_nearest_zeros(input_ptr, grid_ptr, output_ptr, N, C, D_in, H_in, W_in, D_out, H_out, W_out)
+            elif padding_mode == "border":
+                _grid_sample_nearest_border(input_ptr, grid_ptr, output_ptr, N, C, D_in, H_in, W_in, D_out, H_out, W_out)
+            else:  # reflection
+                _grid_sample_nearest_reflection(input_ptr, grid_ptr, output_ptr, N, C, D_in, H_in, W_in, D_out, H_out, W_out)
+        
+        return output_5d
+    
+    else:
+        raise ValueError(f"Input must be 4D or 5D (got {input_data.ndim}). "
+                         "Supported shapes: (N,C,H,W) or (N,C,D,H,W).")

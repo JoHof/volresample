@@ -44,20 +44,26 @@ class ResamplingTorchBackend:
         dimensions, the caller must iterate over non-spatial dimensions.
 
         Behavior:
-        - Input is cast to float32 before interpolation.
-        - If mode == 'nearest', the output is cast back to the original dtype.
-        - If input is a numpy array, the output is a numpy array; otherwise a torch tensor.
+        - For nearest mode with uint8 input: preserves uint8 dtype throughout
+        - For other cases: input is cast to float32 before interpolation
+        - If mode == 'nearest', the output is cast back to the original dtype (for non-uint8)
+        - If input is a numpy array, the output is a numpy array; otherwise a torch tensor
 
         Args:
             data: Input tensor/array of shape (D, H, W) or (C, D, H, W).
+                  Supported dtypes: uint8, int16, float32.
             size: Target size (new_D, new_H, new_W) for spatial dimensions.
             mode: Interpolation mode: 'nearest', 'linear', or 'area'.
                   Note: 'nearest' uses 'nearest-exact' under the hood.
+                  For 'nearest' with uint8: stays uint8
+                  For 'linear'/'area' with uint8: converts to float32
 
         Returns:
             Resampled array/tensor. Shape is (new_D, new_H, new_W) for 3D inputs and
-            (C, new_D, new_H, new_W) for 4D inputs. For 'nearest', dtype matches the
-            input dtype; for other modes the output is float32.
+            (C, new_D, new_H, new_W) for 4D inputs. 
+            - For nearest with uint8 input: uint8 output
+            - For nearest with other dtypes: preserves input dtype
+            - For linear/area: float32 output
 
         Raises:
             ValueError: If mode is not supported or data is not 3D/4D.
@@ -103,8 +109,10 @@ class ResamplingTorchBackend:
         else:
             data_t = data_t.unsqueeze(0)  # (1,C,D,H,W)
 
-        # Always interpolate in float32 for numerical stability and API requirements.
-        data_t = data_t.to(dtype=torch.float32)
+        # For uint8 nearest neighbor, keep in uint8 (nearest-exact supports it directly)
+        # For other cases, convert to float32 for numerical stability
+        if not (torch_orig_dtype == torch.uint8 and mode == "nearest"):
+            data_t = data_t.to(dtype=torch.float32)
 
         # Interpolate. Only pass align_corners for linear/trilinear modes.
         resampled_t = F.interpolate(data_t, size=size, mode=torch_mode)
@@ -114,11 +122,56 @@ class ResamplingTorchBackend:
         if orig_ndim == 3:
             out_t = out_t.squeeze(0)  # (1,D,H,W) -> (D,H,W)
 
-        # If nearest, cast back to original dtype.
-        if mode == "nearest":
+        # If nearest and not already uint8, cast back to original dtype.
+        if mode == "nearest" and torch_orig_dtype != torch.uint8:
             out_t = out_t.to(dtype=torch_orig_dtype)
 
         if was_numpy:
             return out_t.detach().cpu().numpy()
 
         return out_t
+
+    @staticmethod
+    def grid_sample(
+        input: Any,  # torch.Tensor or np.ndarray
+        grid: Any,  # torch.Tensor or np.ndarray
+        mode: str = "bilinear",
+        padding_mode: str = "zeros",
+        align_corners: bool = False,
+    ) -> Any:
+        """Apply grid sampling to input using the provided grid.
+
+        Args:
+            input: Input tensor/array of shape (N, C, D, H, W).
+            grid: Sampling grid of shape (N, D_out, H_out, W_out, 3).
+                  Values should be normalized to [-1, 1] range.
+            mode: Interpolation mode: 'bilinear' or 'nearest'.
+            padding_mode: Padding mode for outside grid values:
+                         'zeros', 'border', or 'reflection'.
+            align_corners: If True, corner pixels are aligned.
+                          Default False to match grid_sample conventions.
+
+        Returns:
+            Sampled output of shape (N, C, D_out, H_out, W_out).
+        """
+        if torch is None:
+            raise ImportError("PyTorch is required for ResamplingTorchBackend")
+        F = torch.nn.functional
+
+        was_numpy = isinstance(input, np.ndarray)
+        if was_numpy:
+            input_t = torch.from_numpy(input).float()
+            grid_t = torch.from_numpy(grid).float()
+        else:
+            input_t = input.float()
+            grid_t = grid.float()
+
+        # PyTorch grid_sample expects grid values in range [-1, 1]
+        output_t = F.grid_sample(
+            input_t, grid_t, mode=mode, padding_mode=padding_mode, align_corners=align_corners
+        )
+
+        if was_numpy:
+            return output_t.detach().cpu().numpy()
+
+        return output_t

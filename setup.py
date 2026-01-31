@@ -86,13 +86,22 @@ def get_cython_extensions():
     # Compiler flags - platform dependent
     if sys.platform == 'win32':
         # Windows with MSVC
-        extra_compile_args_base = ['/O2']
+        extra_compile_args_base = ['/O2', '/arch:AVX2']
         extra_link_args_base = []
         openmp_compile = ['/openmp']
         openmp_link = []
     else:
         # Linux/macOS with GCC/Clang
-        extra_compile_args_base = ['-O3']
+        # AVX2 flags for vectorization - most modern x86_64 CPUs support this
+        avx_flags = []
+        if is_x86:
+            avx_flags = [
+                '-mavx2',           # Enable AVX2 instructions
+                '-mfma',            # Enable FMA (fused multiply-add)
+                '-ftree-vectorize', # Enable auto-vectorization
+                '-ffast-math',      # Allow aggressive FP optimizations
+            ]
+        extra_compile_args_base = ['-O3'] + avx_flags
         extra_link_args_base = []
         openmp_compile = ['-fopenmp']
         openmp_link = ['-fopenmp']
@@ -100,8 +109,10 @@ def get_cython_extensions():
     print(f"\nBuilding extensions for: {machine}")
     print(f"  is_x86: {is_x86}")
     print(f"  is_arm: {is_arm}")
+    if is_x86:
+        print(f"  AVX2/FMA optimizations: ENABLED")
     
-    # 1. GENERIC version (always build - portable fallback)
+    # Only build the generic version to avoid cythonize error
     print("  - Adding generic version (portable)")
     extensions.append(Extension(
         name="mimage.backends.resampling.resampling_cython",
@@ -111,48 +122,7 @@ def get_cython_extensions():
         extra_link_args=extra_link_args_base + openmp_link,
         define_macros=define_macros,
     ))
-    
-    # 2. x86-specific optimized versions
-    if is_x86 and sys.platform != 'win32':  # Skip AVX on Windows for simplicity
-        # AVX2 version
-        print("  - Adding AVX2 version (Intel/AMD 2013+)")
-        extensions.append(Extension(
-            name="mimage.backends.resampling.resampling_cython_avx2",
-            sources=[resampling_source],
-            include_dirs=include_dirs,
-            extra_compile_args=extra_compile_args_base + ['-mavx2', '-mfma'] + openmp_compile,
-            extra_link_args=extra_link_args_base + openmp_link,
-            define_macros=define_macros,
-        ))
-        
-        # AVX512 version
-        print("  - Adding AVX512 version (Intel Skylake-X+)")
-        extensions.append(Extension(
-            name="mimage.backends.resampling.resampling_cython_avx512",
-            sources=[resampling_source],
-            include_dirs=include_dirs,
-            extra_compile_args=extra_compile_args_base + [
-                '-mavx512f', '-mavx512cd', '-mavx512vl', 
-                '-mavx512dq', '-mavx512bw', '-mfma'
-            ] + openmp_compile,
-            extra_link_args=extra_link_args_base + openmp_link,
-            define_macros=define_macros,
-        ))
-    
-    # 3. ARM-specific optimized version
-    if is_arm and sys.platform != 'win32':
-        print("  - Adding ARM optimized version")
-        extensions.append(Extension(
-            name="mimage.backends.resampling.resampling_cython_arm",
-            sources=[resampling_source],
-            include_dirs=include_dirs,
-            extra_compile_args=extra_compile_args_base + ['-mcpu=native'] + openmp_compile,
-            extra_link_args=extra_link_args_base + openmp_link,
-            define_macros=define_macros,
-        ))
-    
     print(f"\nTotal extensions to build: {len(extensions)}\n")
-    
     return extensions
 
 
@@ -185,8 +155,13 @@ def main():
     
     # Cythonize if available
     if extensions and CYTHON_AVAILABLE:
+        # Remove duplicate Extension objects (by name)
+        unique_exts = {}
+        for ext in extensions:
+            if ext.name not in unique_exts:
+                unique_exts[ext.name] = ext
         ext_modules = cythonize(
-            extensions,
+            list(unique_exts.values()),
             compiler_directives={
                 'language_level': "3",
                 'boundscheck': False,
@@ -195,7 +170,6 @@ def main():
                 'initializedcheck': False,
                 'nonecheck': False,
             },
-            # Build in parallel when possible
             nthreads=int(os.environ.get('CYTHON_NTHREADS', '1')),
         )
     else:
