@@ -9,10 +9,10 @@ def resample(
     size: Tuple[int, int, int],
     mode: Literal["nearest", "linear", "area"] = "linear",
 ) -> NDArray[np.float32] | NDArray[np.uint8] | NDArray[np.int16]:
-    """Resample a 3D or 4D volume to a new size.
+    """Resample a 3D, 4D, or 5D volume to a new size.
 
     Args:
-        data: Input array of shape (D, H, W) or (C, D, H, W).
+        data: Input array of shape (D, H, W), (C, D, H, W), or (N, C, D, H, W).
             Supported dtypes: uint8, int16, float32.
         size: Target spatial size (D_out, H_out, W_out).
         mode: Interpolation mode:
@@ -45,6 +45,12 @@ def resample(
         >>> resampled_4d = volresample.resample(data_4d, (32, 32, 32))
         >>> resampled_4d.shape
         (4, 32, 32, 32)
+
+        Batched multi-channel:
+        >>> data_5d = np.random.rand(2, 4, 64, 64, 64).astype(np.float32)
+        >>> resampled_5d = volresample.resample(data_5d, (32, 32, 32))
+        >>> resampled_5d.shape
+        (2, 4, 32, 32, 32)
     """
     ...
 

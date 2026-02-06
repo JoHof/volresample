@@ -104,10 +104,11 @@ def resample(
     tuple size,
     str mode="linear"
 ):
-    """Resample 3D or 4D volume using specified interpolation mode.
+    """Resample 3D, 4D or 5D volume using specified interpolation mode.
     
     Args:
-        data: Input array, shape (D, H, W) or (C, D, H, W). Supports uint8, int16, float32.
+        data: Input array, shape (D, H, W), (C, D, H, W), or (N, C, D, H, W). 
+              Supports uint8, int16, float32.
         size: Output size (D, H, W).
         mode: Interpolation mode - 'nearest', 'linear', 'area'.
         
@@ -127,24 +128,41 @@ def resample(
         >>> resampled.shape
         (32, 32, 32)
     """
-    cdef bint is_3d = data.ndim == 3
-    cdef int n_channels
+    cdef int ndim
+    cdef int n_batch, n_channels
     cdef cnp.ndarray data_np
     cdef cnp.ndarray output
     cdef cnp.ndarray channel_output
-    cdef int c
+    cdef int b, c
+    cdef list batch_outputs, channel_outputs
     
     # Apply global thread settings
     _apply_thread_settings()
     
     # Ensure numpy array with C-contiguous memory layout
     data_np = np.ascontiguousarray(data)
+    ndim = data_np.ndim
     
-    if data_np.ndim not in (3, 4):
-        raise ValueError(f"Data must be 3D or 4D, got {data_np.ndim}D")
+    if ndim not in (3, 4, 5):
+        raise ValueError(f"Data must be 3D, 4D, or 5D, got {ndim}D")
+    
+    # Handle 5D: iterate over batch and channels
+    if ndim == 5:
+        n_batch = data_np.shape[0]
+        n_channels = data_np.shape[1]
+        batch_outputs = []
+        
+        for b in range(n_batch):
+            channel_outputs = []
+            for c in range(n_channels):
+                channel_output = _resample_channel(data_np[b, c], size, mode)
+                channel_outputs.append(channel_output)
+            batch_outputs.append(np.stack(channel_outputs, axis=0))
+        
+        return np.stack(batch_outputs, axis=0)
     
     # Handle 4D: iterate over channels
-    if not is_3d:
+    elif ndim == 4:
         n_channels = data_np.shape[0]
         channel_outputs = []
         

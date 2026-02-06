@@ -56,6 +56,17 @@ resampled_4d = volresample.resample(volume_4d, (64, 64, 64), mode='linear')
 print(resampled_4d.shape)  # (4, 64, 64, 64)
 ```
 
+### Batched Multi-Channel Volumes
+
+```python
+# 5D volume with batch dimension (N, C, D, H, W)
+volume_5d = np.random.rand(2, 4, 128, 128, 128).astype(np.float32)
+
+# Resample all batches and channels
+resampled_5d = volresample.resample(volume_5d, (64, 64, 64), mode='linear')
+print(resampled_5d.shape)  # (2, 4, 64, 64, 64)
+```
+
 ### Grid Sampling
 
 ```python
@@ -89,10 +100,10 @@ resampled = volresample.resample(volume, (64, 64, 64), mode='linear')
 
 ### `resample(data, size, mode='linear')`
 
-Resample a 3D or 4D volume to a new size.
+Resample a 3D, 4D, or 5D volume to a new size.
 
 **Parameters:**
-- `data` (ndarray): Input volume of shape `(D, H, W)` or `(C, D, H, W)`
+- `data` (ndarray): Input volume of shape `(D, H, W)`, `(C, D, H, W)`, or `(N, C, D, H, W)`
 - `size` (tuple): Target size `(D_out, H_out, W_out)`
 - `mode` (str): Interpolation mode:
   - `'nearest'`: Nearest neighbor (works with all dtypes)

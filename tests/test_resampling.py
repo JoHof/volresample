@@ -73,6 +73,27 @@ def test_resample_4d_linear():
     assert np.issubdtype(out.dtype, np.floating)
 
 
+def test_resample_5d_nearest():
+    arr = np.arange(32, dtype=np.float32).reshape(2, 2, 2, 2, 2)
+    out = volresample.resample(arr, (4, 4, 4), mode="nearest")
+    assert out.shape == (2, 2, 4, 4, 4)
+    assert np.issubdtype(out.dtype, np.floating)
+
+
+def test_resample_5d_linear():
+    arr = np.arange(32, dtype=np.float32).reshape(2, 2, 2, 2, 2)
+    out = volresample.resample(arr, (4, 4, 4), mode="linear")
+    assert out.shape == (2, 2, 4, 4, 4)
+    assert np.issubdtype(out.dtype, np.floating)
+
+
+def test_resample_5d_area():
+    arr = np.ones((2, 2, 4, 4, 4), dtype=np.float32)
+    out = volresample.resample(arr, (2, 2, 2), mode="area")
+    assert out.shape == (2, 2, 2, 2, 2)
+    assert np.allclose(out, 1.0)
+
+
 # ============================================================================
 # Torch vs Cython Comparison Tests (exact match verification)
 # ============================================================================
@@ -153,6 +174,43 @@ def test_4d_torch_cython_match(input_shape, output_size, mode):
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch backend not available")
+@pytest.mark.parametrize("input_shape,output_size,mode", [
+    # 5D tests - nearest
+    ((2, 4, 64, 64, 64), (32, 32, 32), "nearest"),
+    ((1, 8, 128, 128, 128), (64, 64, 64), "nearest"),
+    ((3, 2, 32, 32, 32), (64, 64, 64), "nearest"),  # Upsampling
+    
+    # 5D tests - linear
+    ((2, 4, 64, 64, 64), (32, 32, 32), "linear"),
+    ((1, 8, 128, 128, 128), (64, 64, 64), "linear"),
+    ((3, 2, 32, 32, 32), (64, 64, 64), "linear"),  # Upsampling
+    
+    # 5D tests - area (downsampling)
+    ((2, 4, 64, 64, 64), (32, 32, 32), "area"),
+    ((1, 8, 128, 128, 128), (64, 64, 64), "area"),
+])
+def test_5d_torch_cython_match(input_shape, output_size, mode):
+    """Test that Cython and PyTorch implementations produce identical results for 5D data."""
+    # Generate test data
+    data = generate_test_data(input_shape)
+    
+    # Run both implementations
+    torch_result = TorchReference().resample(data, output_size, mode=mode)
+    cython_result = volresample.resample(data, output_size, mode=mode)
+    
+    # Check shapes match
+    assert torch_result.shape == cython_result.shape, \
+        f"Shape mismatch: torch={torch_result.shape}, cython={cython_result.shape}"
+    
+    # Check values match within tolerance
+    max_diff = np.max(np.abs(torch_result - cython_result))
+    mean_diff = np.mean(np.abs(torch_result - cython_result))
+    
+    assert max_diff < TOLERANCE, \
+        f"Max difference {max_diff:.6e} exceeds tolerance {TOLERANCE:.6e} (mean diff: {mean_diff:.6e})"
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch backend not available")
 @pytest.mark.parametrize("mode", ["nearest", "linear", "area"])
 def test_small_data_torch_cython_match(mode):
     """Test with small data sizes to verify edge cases."""
@@ -173,6 +231,15 @@ def test_small_data_torch_cython_match(mode):
     max_diff_4d = np.max(np.abs(torch_result_4d - cython_result_4d))
     assert max_diff_4d < TOLERANCE, \
         f"4D: Max difference {max_diff_4d:.6e} exceeds tolerance {TOLERANCE:.6e}"
+    
+    # Test 5D small data
+    data_5d = np.arange(32, dtype=np.float32).reshape(2, 2, 2, 2, 2)
+    torch_result_5d = TorchReference().resample(data_5d, (4, 4, 4), mode=mode)
+    cython_result_5d = volresample.resample(data_5d, (4, 4, 4), mode=mode)
+    
+    max_diff_5d = np.max(np.abs(torch_result_5d - cython_result_5d))
+    assert max_diff_5d < TOLERANCE, \
+        f"5D: Max difference {max_diff_5d:.6e} exceeds tolerance {TOLERANCE:.6e}"
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch backend not available")
@@ -196,6 +263,15 @@ def test_non_uniform_sizes_torch_cython_match(mode):
     max_diff_4d = np.max(np.abs(torch_result_4d - cython_result_4d))
     assert max_diff_4d < TOLERANCE, \
         f"4D non-uniform: Max difference {max_diff_4d:.6e} exceeds tolerance {TOLERANCE:.6e}"
+    
+    # Non-uniform 5D
+    data_5d = generate_test_data((2, 3, 100, 80, 60))
+    torch_result_5d = TorchReference().resample(data_5d, (50, 40, 30), mode=mode)
+    cython_result_5d = volresample.resample(data_5d, (50, 40, 30), mode=mode)
+    
+    max_diff_5d = np.max(np.abs(torch_result_5d - cython_result_5d))
+    assert max_diff_5d < TOLERANCE, \
+        f"5D non-uniform: Max difference {max_diff_5d:.6e} exceeds tolerance {TOLERANCE:.6e}"
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch backend not available")
@@ -322,6 +398,15 @@ def test_identity_resample(mode):
     assert torch_result.shape == cython_result.shape == (4, 32, 32, 32)
     max_diff = np.max(np.abs(torch_result - cython_result))
     assert max_diff < TOLERANCE, f"4D identity {mode}: Max diff {max_diff:.6e}"
+    
+    # 5D identity
+    data_5d = generate_test_data((2, 4, 32, 32, 32))
+    torch_result = TorchReference().resample(data_5d, (32, 32, 32), mode=mode)
+    cython_result = volresample.resample(data_5d, (32, 32, 32), mode=mode)
+    
+    assert torch_result.shape == cython_result.shape == (2, 4, 32, 32, 32)
+    max_diff = np.max(np.abs(torch_result - cython_result))
+    assert max_diff < TOLERANCE, f"5D identity {mode}: Max diff {max_diff:.6e}"
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch backend not available")

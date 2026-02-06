@@ -381,6 +381,12 @@ def main():
         # Small 3D with multi-channel
         ((4, 64, 64, 64), (32, 32, 32), "4D Small (4ch) 64→32 linear", "linear"),
         
+        # Small 5D with batch and multi-channel
+        ((2, 4, 64, 64, 64), (32, 32, 32), "5D Small (2x4ch) 64→32 linear", "linear"),
+        
+        # Small 5D with larger batch size
+        ((20, 4, 64, 64, 64), (32, 32, 32), "5D Small (20x4ch) 64→32 linear", "linear"),
+        
         # Small with different scaling (not half)
         ((64, 64, 64), (48, 48, 48), "3D Small 64→48 linear", "linear"),
         
@@ -419,6 +425,7 @@ def main():
         # Large 3D grid sample - both modes
         ((1, 2, 128, 128, 128), (1, 96, 96, 96, 3), "Grid Sample 3D Large nearest", "nearest", "zeros"),
         ((1, 2, 128, 128, 128), (1, 96, 96, 96, 3), "Grid Sample 3D Large linear", "linear", "zeros"),
+        ((1, 2, 128, 128, 128), (1, 96, 96, 96, 3), "Grid Sample 3D Large linear", "linear", "reflection"),
     ]
     
     grid_results = []

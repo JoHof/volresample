@@ -26,8 +26,7 @@ class TorchReference:
     ) -> Any:
         """Resample a 3D volume to a new size using interpolation.
 
-        Supports 3D (D, H, W) and 4D (C, D, H, W) inputs. For tensors with additional
-        dimensions, the caller must iterate over non-spatial dimensions.
+        Supports 3D (D, H, W), 4D (C, D, H, W), and 5D (N, C, D, H, W) inputs.
 
         Behavior:
         - For nearest mode with uint8 input: preserves uint8 dtype throughout
@@ -36,7 +35,7 @@ class TorchReference:
         - If input is a numpy array, the output is a numpy array; otherwise a torch tensor
 
         Args:
-            data: Input tensor/array of shape (D, H, W) or (C, D, H, W).
+            data: Input tensor/array of shape (D, H, W), (C, D, H, W), or (N, C, D, H, W).
                   Supported dtypes: uint8, int16, float32.
             size: Target size (new_D, new_H, new_W) for spatial dimensions.
             mode: Interpolation mode: 'nearest', 'linear', or 'area'.
@@ -45,14 +44,14 @@ class TorchReference:
                   For 'linear'/'area' with uint8: converts to float32
 
         Returns:
-            Resampled array/tensor. Shape is (new_D, new_H, new_W) for 3D inputs and
-            (C, new_D, new_H, new_W) for 4D inputs. 
+            Resampled array/tensor. Shape is (new_D, new_H, new_W) for 3D inputs,
+            (C, new_D, new_H, new_W) for 4D inputs, and (N, C, new_D, new_H, new_W) for 5D inputs.
             - For nearest with uint8 input: uint8 output
             - For nearest with other dtypes: preserves input dtype
             - For linear/area: float32 output
 
         Raises:
-            ValueError: If mode is not supported or data is not 3D/4D.
+            ValueError: If mode is not supported or data is not 3D/4D/5D.
             ImportError: If PyTorch is not available.
         """
         if torch is None:
@@ -72,10 +71,10 @@ class TorchReference:
             torch_orig_dtype = data.dtype
             data_t = data
 
-        if data_t.ndim not in (3, 4):
+        if data_t.ndim not in (3, 4, 5):
             raise ValueError(
-                f"Data must be 3D or 4D (got {data_t.ndim}). "
-                "Supported shapes: (D,H,W) or (C,D,H,W)."
+                f"Data must be 3D, 4D, or 5D (got {data_t.ndim}). "
+                "Supported shapes: (D,H,W), (C,D,H,W), or (N,C,D,H,W)."
             )
 
         mode_map = {
@@ -92,8 +91,9 @@ class TorchReference:
         # Prepare shape for interpolate: (N, C, D, H, W)
         if orig_ndim == 3:
             data_t = data_t.unsqueeze(0).unsqueeze(0)  # (1,1,D,H,W)
-        else:
+        elif orig_ndim == 4:
             data_t = data_t.unsqueeze(0)  # (1,C,D,H,W)
+        # For 5D, data_t is already in the correct shape (N,C,D,H,W)
 
         # For uint8 nearest neighbor, keep in uint8 (nearest-exact supports it directly)
         # For other cases, convert to float32 for numerical stability
@@ -103,10 +103,13 @@ class TorchReference:
         # Interpolate. Only pass align_corners for linear/trilinear modes.
         resampled_t = F.interpolate(data_t, size=size, mode=torch_mode)
 
-        # Remove batch dimension; keep channel dimension for 4D inputs.
-        out_t = resampled_t.squeeze(0)  # (1,*,D,H,W) -> (*,D,H,W)
+        # Remove added dimensions based on original shape
         if orig_ndim == 3:
-            out_t = out_t.squeeze(0)  # (1,D,H,W) -> (D,H,W)
+            out_t = resampled_t.squeeze(0).squeeze(0)  # (1,1,D,H,W) -> (D,H,W)
+        elif orig_ndim == 4:
+            out_t = resampled_t.squeeze(0)  # (1,C,D,H,W) -> (C,D,H,W)
+        else:  # orig_ndim == 5
+            out_t = resampled_t  # Already (N,C,D,H,W)
 
         # If nearest and not already uint8, cast back to original dtype.
         if mode == "nearest" and torch_orig_dtype != torch.uint8:

@@ -33,6 +33,13 @@ Multi-channel resampling:
 >>> resampled_4d.shape
 (4, 32, 32, 32)
 
+Batched multi-channel resampling:
+
+>>> data_5d = np.random.rand(2, 4, 64, 64, 64).astype(np.float32)
+>>> resampled_5d = volresample.resample(data_5d, (32, 32, 32), mode='linear')
+>>> resampled_5d.shape
+(2, 4, 32, 32, 32)
+
 Grid sampling:
 
 >>> input = np.random.rand(1, 2, 32, 32, 32).astype(np.float32)
