@@ -44,9 +44,13 @@ build-backend = "setuptools.build_meta"
 [tool.cibuildwheel]
 # Build for multiple Python versions (3.9+, 3.8 is EOL)
 build = ["cp39-*", "cp310-*", "cp311-*", "cp312-*", "cp313-*"]
+build-verbosity = 3
 
 # Skip PyPy, musllinux (for simplicity), and 32-bit builds
 skip = ["pp*", "*-musllinux*", "*-win32", "*-manylinux_i686"]
+
+# Use uv for much faster dependency resolution (especially Python 3.11+)
+build-frontend = "build[uv]"
 
 # Build for multiple architectures
 # x86_64 on Linux, macOS, Windows
@@ -92,6 +96,7 @@ before-all = "brew install libomp || true"
 CFLAGS = "-I/opt/homebrew/opt/libomp/include -I/usr/local/opt/libomp/include"
 LDFLAGS = "-L/opt/homebrew/opt/libomp/lib -L/usr/local/opt/libomp/lib -lomp"
 CYTHON_NTHREADS = "4"
+MACOSX_DEPLOYMENT_TARGET = "15.0"
 
 [tool.cibuildwheel.windows]
 # Build for 64-bit Windows
