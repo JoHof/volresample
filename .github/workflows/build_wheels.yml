@@ -23,8 +23,7 @@ jobs:
       fail-fast: false
       matrix:
         # macos-15-large = Intel x86_64, macos-15 = Apple Silicon ARM64
-        #os: [ubuntu-latest, windows-latest, macos-15]
-        os: [ubuntu-latest, macos-15]
+        os: [ubuntu-latest, windows-latest, macos-15]
 
     steps:
       - uses: actions/checkout@v4
@@ -103,6 +102,8 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
+          # Add dependencty manaully since we don't want to pull from PyPI during build/test phase in cibuildwheel
+          pip install "numpy>=2.0.0" pytest
           # --find-links lets pip pick the right wheel for this platform/version
           pip install volresample --no-index --find-links dist/
 
