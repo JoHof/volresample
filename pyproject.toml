@@ -49,9 +49,6 @@ build-verbosity = 3
 # Skip PyPy, musllinux (for simplicity), and 32-bit builds
 skip = ["pp*", "*-musllinux*", "*-win32", "*-manylinux_i686"]
 
-# Use uv for much faster dependency resolution (especially Python 3.11+)
-build-frontend = "build[uv]"
-
 # Build for multiple architectures
 # x86_64 on Linux, macOS, Windows
 # ARM64 (aarch64) on Linux
@@ -63,7 +60,7 @@ archs = ["auto"]
 dependency-versions = "latest"
 
 # Environment variables for the build
-environment = {CYTHON_NTHREADS = "4"}
+environment = {  PIP_VERBOSE = "1", PIP_PROGRESS_BAR = "off", PIP_DISABLE_PIP_VERSION_CHECK = "1"}
 # Build dependencies come from [build-system] requires — no before-build needed
 
 # Test the built wheels
@@ -73,6 +70,9 @@ test-skip = ["*-manylinux_aarch64"]  # Skip tests on QEMU-emulated platforms onl
 
 # Platform-specific settings
 [tool.cibuildwheel.linux]
+# Use uv for much faster dependency resolution (especially Python 3.11+)
+build-frontend = "build[uv]"
+
 # Use manylinux2014 for broader compatibility
 manylinux-x86_64-image = "manylinux2014"
 manylinux-aarch64-image = "manylinux2014"
