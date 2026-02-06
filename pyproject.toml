@@ -10,13 +10,12 @@ dependencies = [
 authors = [
     {name = "Johannes", email = "j.hofmanninger@gmail.com"}
 ]
-license = {text = "MIT"}
+license = "MIT"
 keywords = ["volume", "resampling", "interpolation", "3d", "medical imaging", "cython"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -54,14 +53,13 @@ skip = ["pp*", "*-musllinux*", "*-win32", "*-manylinux_i686"]
 archs = ["auto"]
 
 # Environment variables for the build
-# Use oldest supported NumPy for ABI compatibility
 environment = {CYTHON_NTHREADS = "4"}
-before-build = "pip install 'numpy>=1.21.0,<2.0' cython>=3.0.0"
+# Build dependencies come from [build-system] requires — no before-build needed
 
 # Test the built wheels
 test-requires = ["pytest", "numpy"]
-test-command = "pytest {project}/tests -v --ignore={project}/tests/torch_reference.py"
-test-skip = ["*-macosx_arm64", "*-macosx_universal2:arm64", "*-manylinux_aarch64"]  # Skip tests on emulated platforms
+test-command = "pytest {project}/tests -v --ignore={project}/tests/torch_reference.py --ignore={project}/tests/benchmark_resampling.py"
+test-skip = ["*-manylinux_aarch64"]  # Skip tests on QEMU-emulated platforms only
 
 # Platform-specific settings
 [tool.cibuildwheel.linux]
@@ -73,8 +71,9 @@ manylinux-aarch64-image = "manylinux2014"
 repair-wheel-command = "auditwheel repair -w {dest_dir} {wheel}"
 
 [tool.cibuildwheel.macos]
-# Build separate x86_64 and arm64 wheels (universal2 has issues with OpenMP)
-archs = ["x86_64", "arm64"]
+# Use native arch per runner: macos-13 → x86_64, macos-14 → arm64
+# (cross-compiling fails because Apple Clang OpenMP flags differ per arch)
+archs = ["auto"]
 
 # Repair wheel for macOS
 repair-wheel-command = "delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}"
@@ -121,9 +120,18 @@ dev = [
     "ipywidgets>=8.1.7",
 ]
 
+[tool.setuptools]
+# MANIFEST.in controls the sdist; package-data controls the wheel.
+# Setting this to false prevents MANIFEST.in from leaking
+# .pyx/.pxd/.c into wheels.
+include-package-data = false
+
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["volresample*"]
+
+[tool.setuptools.package-data]
+volresample = ["*.pyi", "py.typed"]
 
 [tool.pytest.ini_options]
 filterwarnings = [

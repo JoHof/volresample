@@ -1,154 +1,154 @@
-name: Build Wheels
+name: Build & Publish
 
 on:
   push:
-    branches:
-      - main
-      - master
-    tags:
-      - 'v*'
+    branches: [main, master]
+    tags: ["v*"]
   pull_request:
-    branches:
-      - main
-      - master
-  workflow_dispatch:  # Allow manual triggers
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Build wheels via cibuildwheel (config lives in pyproject.toml)
+  # ---------------------------------------------------------------------------
   build_wheels:
-    name: Build wheels on ${{ matrix.os }}
+    name: Wheels / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-13, macos-14]  # macos-13=x86, macos-14=ARM
+        # macos-13 = Intel x86_64, macos-14 = Apple Silicon ARM64
+        os: [ubuntu-latest, windows-latest, macos-13, macos-14]
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
-      # Set up QEMU for ARM builds on Linux
+      # QEMU for Linux aarch64 cross-compilation
       - name: Set up QEMU
         if: runner.os == 'Linux'
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
 
-      - name: Install cibuildwheel
-        run: python -m pip install cibuildwheel==2.16.2
-
       - name: Build wheels
-        run: python -m cibuildwheel --output-dir wheelhouse
-        env:
-          # Build for both x86_64 and aarch64 on Linux
-          CIBW_ARCHS_LINUX: "x86_64 aarch64"
-          # Build for x86_64 and arm64 on macOS
-          CIBW_ARCHS_MACOS: "x86_64 arm64"
-          # Build for x86_64 on Windows
-          CIBW_ARCHS_WINDOWS: "AMD64"
+        uses: pypa/cibuildwheel@v2.21.3
+        # All config (build targets, test-command, etc.) in [tool.cibuildwheel]
 
-      - name: Upload wheels
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}
-          path: ./wheelhouse/*.whl
+          path: wheelhouse/*.whl
           retention-days: 7
 
+  # ---------------------------------------------------------------------------
+  # Build source distribution
+  # ---------------------------------------------------------------------------
   build_sdist:
-    name: Build source distribution
+    name: Source distribution
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-
-      - name: Install build dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install build
+          python-version: "3.11"
 
       - name: Build sdist
-        run: python -m build --sdist
+        run: pipx run build --sdist
 
-      - name: Upload sdist
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: sdist
           path: dist/*.tar.gz
           retention-days: 7
 
-  upload_pypi:
-    name: Upload to PyPI
-    needs: [build_wheels, build_sdist]
-    runs-on: ubuntu-latest
-    # Only upload on tagged releases
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          pattern: wheels-*
-          merge-multiple: true
-
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          pattern: sdist
-          merge-multiple: true
-
-      - name: Display downloaded files
-        run: ls -lR dist/
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          user: __token__
-          password: ${{ secrets.PYPI_API_TOKEN }}
-          # Uncomment below to publish to TestPyPI first
-          # repository-url: https://test.pypi.org/legacy/
-
+  # ---------------------------------------------------------------------------
+  # Smoke-test: install each wheel on a fresh runner and verify import
+  # (Heavy testing already runs inside cibuildwheel via test-command)
+  # ---------------------------------------------------------------------------
   test_wheels:
-    name: Test wheels on ${{ matrix.os }} - Python ${{ matrix.python-version }}
-    needs: [build_wheels]
+    name: Test / ${{ matrix.os }} / py${{ matrix.python-version }}
+    needs: build_wheels
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-13]
-        python-version: ['3.8', '3.9', '3.10', '3.11', '3.12', '3.13']
+        os: [ubuntu-latest, windows-latest, macos-13, macos-14]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        exclude:
+          # macos-14 ARM runners only ship Python ≥3.10
+          - os: macos-14
+            python-version: "3.9"
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Download wheels
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           path: dist
           pattern: wheels-${{ matrix.os }}
           merge-multiple: true
 
       - name: Install wheel
+        shell: bash
         run: |
           python -m pip install --upgrade pip
-          pip install dist/*.whl
+          # --find-links lets pip pick the right wheel for this platform/version
+          pip install volresample --no-index --find-links dist/
 
-      - name: Test import
+      - name: Smoke test
         run: |
-          python -c "import mimage; print('✓ mimage imported successfully')"
-          python -c "from mimage.backends.resampling.cpu_detection import load_best_backend; backend = load_best_backend(); print(f'✓ Loaded backend: {backend.__name__}')"
+          python -c "from volresample import resample; print('import ok')"
+          python -c "import numpy as np; from volresample import resample; d = np.random.rand(8,8,8).astype(np.float32); r = resample(d, (4,4,4), mode='linear'); print(f'resample ok  {d.shape} -> {r.shape}')"
 
       - name: Run tests
         run: |
           pip install pytest numpy
-          pytest tests/ -v
+          pytest tests/ -v --ignore=tests/torch_reference.py --ignore=tests/benchmark_resampling.py
+
+  # ---------------------------------------------------------------------------
+  # Publish to PyPI on tagged releases (v*)
+  # ---------------------------------------------------------------------------
+  publish:
+    name: Publish to PyPI
+    needs: [build_wheels, build_sdist, test_wheels]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+
+    # Trusted publishing (OIDC) — configure at https://pypi.org/manage/project/volresample/settings/publishing/
+    environment: pypi
+    permissions:
+      id-token: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: "{wheels-*,sdist}"
+          merge-multiple: true
+
+      - name: Verify artifacts
+        run: ls -lh dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # No password needed — uses OIDC trusted publishing
+        # To fall back to API tokens, remove the environment block above and use:
+        # with:
+        #   password: ${{ secrets.PYPI_API_TOKEN }}

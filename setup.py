@@ -76,15 +76,30 @@ def get_cython_extensions():
         extra_link_args_base = []
         openmp_compile = ["/openmp"]
         openmp_link = []
-    else:
-        # Linux/macOS with GCC/Clang
+    elif sys.platform == "darwin":
+        # macOS with Apple Clang — needs special OpenMP handling
         avx_flags = []
         if is_x86:
             avx_flags = [
-                "-mavx2",  # Enable AVX2 instructions
-                "-mfma",  # Enable FMA (fused multiply-add)
-                "-ftree-vectorize",  # Enable auto-vectorization
-                "-ffast-math",  # Allow aggressive FP optimizations
+                "-mavx2",
+                "-mfma",
+                "-ftree-vectorize",
+                "-ffast-math",
+            ]
+        extra_compile_args_base = ["-O3"] + avx_flags
+        extra_link_args_base = []
+        # Apple Clang does not support -fopenmp directly; use -Xclang -fopenmp
+        openmp_compile = ["-Xclang", "-fopenmp"]
+        openmp_link = ["-lomp"]
+    else:
+        # Linux with GCC/Clang
+        avx_flags = []
+        if is_x86:
+            avx_flags = [
+                "-mavx2",
+                "-mfma",
+                "-ftree-vectorize",
+                "-ffast-math",
             ]
         extra_compile_args_base = ["-O3"] + avx_flags
         extra_link_args_base = []
@@ -171,40 +186,23 @@ def main():
         long_description_content_type="text/markdown",
         author="Johannes",
         author_email="j.hofmanninger@gmail.com",
-        url="https://github.com/yourusername/volresample",
+        url="https://github.com/JoHof/volresample",
         packages=find_packages(where="src"),
         package_dir={"": "src"},
         ext_modules=ext_modules,
+        # Wheel should only contain runtime artifacts.
+        # Cython sources (.pyx/.pxd) and generated .c belong in sdist only.
+        # (include-package-data = false in pyproject.toml enforces this)
+        package_data={"volresample": ["*.pyi", "py.typed"]},
         install_requires=[
             "numpy>=1.20.0",
         ],
-        extras_require={
-            "dev": [
-                "pytest>=7.0.0",
-                "torch>=1.9.0",
-            ],
-        },
-        python_requires=">=3.8",
-        classifiers=[
-            "Development Status :: 4 - Beta",
-            "Intended Audience :: Science/Research",
-            "Intended Audience :: Healthcare Industry",
-            "License :: OSI Approved :: MIT License",  # Update if different
-            "Programming Language :: Python :: 3",
-            "Programming Language :: Python :: 3.8",
-            "Programming Language :: Python :: 3.9",
-            "Programming Language :: Python :: 3.10",
-            "Programming Language :: Python :: 3.11",
-            "Programming Language :: Python :: 3.12",
-            "Programming Language :: Python :: 3.13",
-            "Programming Language :: Cython",
-            "Topic :: Scientific/Engineering :: Medical Science Apps.",
-            "Topic :: Scientific/Engineering :: Image Processing",
-        ],
+        python_requires=">=3.9",
+        # Note: metadata (name, version, classifiers, license, etc.) is
+        # authoritative in pyproject.toml [project].  Only build/extension
+        # logic belongs here.
         keywords="medical imaging resampling interpolation cython",
         cmdclass={"build_ext": BuildExtWithArchDetection},
-        # Include package data
-        include_package_data=True,
         zip_safe=False,  # Required for Cython extensions
     )
 
