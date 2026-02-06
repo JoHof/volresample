@@ -72,10 +72,8 @@ test-skip = ["*-manylinux_aarch64"]  # Skip tests on QEMU-emulated platforms onl
 [tool.cibuildwheel.linux]
 # Use uv for much faster dependency resolution (especially Python 3.11+)
 build-frontend = "build[uv]"
-
-# Use manylinux2014 for broader compatibility
-manylinux-x86_64-image = "manylinux2014"
-manylinux-aarch64-image = "manylinux2014"
+manylinux-x86_64-image = "manylinux_2_28"
+manylinux-aarch64-image = "manylinux_2_28"
 
 # Repair wheel to include shared libraries
 repair-wheel-command = "auditwheel repair -w {dest_dir} {wheel}"
