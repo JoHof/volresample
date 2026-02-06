@@ -6,8 +6,8 @@ This document describes the code organization and design decisions in volresampl
 
 volresample is a Cython-based 3D volume resampling library with OpenMP parallelization. It provides two main operations:
 
-- `resample()` - Resize volumes to new dimensions (like PyTorch's `F.interpolate`)
-- `grid_sample()` - Sample at arbitrary locations (like PyTorch's `F.grid_sample`)
+- `resample()` - Resize volumes to new dimensions (like PyTorch's `F.interpolate`). Supports 3D, 4D (multi-channel), and 5D (batched multi-channel) tensors.
+- `grid_sample()` - Sample at arbitrary locations (like PyTorch's `F.grid_sample`). Supports 5D tensors for 3D volumes.
 
 ## Project Structure
 
@@ -118,19 +118,26 @@ data_np = np.ascontiguousarray(data)
 
 This ensures predictable memory access patterns and enables the raw pointer arithmetic used throughout.
 
-### 5. 4D as Channel Iteration
+### 5. 4D/5D as Batch and Channel Iteration
 
-Rather than special-casing 4D arrays, the `resample()` function processes each channel independently:
+The `resample()` function supports 3D `(D, H, W)`, 4D `(C, D, H, W)`, and 5D `(N, C, D, H, W)` tensors by iterating over batch and channel dimensions:
 
 ```cython
-if not is_3d:
+# 5D: iterate over batch and channels
+if ndim == 5:
+    for b in range(n_batch):
+        for c in range(n_channels):
+            channel_output = _resample_channel(data_np[b, c], size, mode)
+            # ... stack results
+
+# 4D: iterate over channels only
+elif ndim == 4:
     for c in range(n_channels):
         channel_output = _resample_channel(data_np[c], size, mode)
-        channel_outputs.append(channel_output)
-    return np.stack(channel_outputs, axis=0)
+        # ... stack results
 ```
 
-This keeps the core resampling functions simple (3D only) while supporting multi-channel data.
+This keeps the core resampling functions simple (3D only) while supporting multi-channel and batched data. Each 3D volume is processed independently, allowing for straightforward parallelization within each volume.
 
 ### 6. PyTorch Compatibility
 
@@ -160,6 +167,7 @@ for od in prange(out_d, schedule='static', nogil=True):
 ```
 
 - **3D resampling**: Parallelizes over output depth
+- **4D/5D resampling**: Each 3D volume (per batch/channel) is processed sequentially in Python, but parallelized over depth within each volume
 - **grid_sample**: Parallelizes over batch × depth (flattened)
 
 Each thread writes to independent output locations, so no synchronization is needed.
