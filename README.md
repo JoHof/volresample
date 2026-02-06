@@ -11,9 +11,9 @@ Implemented against PyTorch's `F.interpolate` and `F.grid_sample` as a reference
 
 - Cython-optimized with OpenMP parallelization
 - Simple API: `resample()` and `grid_sample()`
-- Interpolation modes: nearest, trilinear, area
+- Interpolation modes: nearest, linear and area
 - Supports 3D and 4D (multi-channel) volumes
-- Supports uint8, int16, and float32 dtypes
+- Supports uint8, int16 (nearest) and float32 dtypes (all)
 
 ## Installation
 
@@ -26,7 +26,7 @@ Or build from source:
 ```bash
 git clone https://github.com/JoHof/volresample.git
 cd volresample
-pip install -e .
+uv sync
 ```
 
 ## Quick Start
