@@ -53,6 +53,11 @@ skip = ["pp*", "*-musllinux*", "*-win32", "*-manylinux_i686"]
 # ARM64 (aarch64) on Linux
 archs = ["auto"]
 
+# Use latest package versions instead of pinned constraints
+# (needed because setuptools>=77 requires packaging>=24.2, but cibuildwheel's
+# Python 3.9 constraint file pins packaging==24.1)
+dependency-versions = "latest"
+
 # Environment variables for the build
 environment = {CYTHON_NTHREADS = "4"}
 # Build dependencies come from [build-system] requires — no before-build needed
