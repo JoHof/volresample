@@ -1,7 +1,9 @@
 """PyTorch reference implementation for testing volresample."""
 
 from __future__ import annotations
-from typing import TYPE_CHECKING, Tuple, Any, overload
+
+from typing import TYPE_CHECKING, Any
+
 import numpy as np
 
 try:
@@ -21,7 +23,7 @@ class TorchReference:
     @staticmethod
     def resample(
         data: Any,  # torch.Tensor or np.ndarray
-        size: Tuple[int, int, int],
+        size: tuple[int, int, int],
         mode: str = "linear",
     ) -> Any:
         """Resample a 3D volume to a new size using interpolation.
@@ -60,14 +62,12 @@ class TorchReference:
 
         was_numpy = isinstance(data, np.ndarray)
         if was_numpy:
-            orig_dtype = data.dtype
             data_t = torch.from_numpy(data)
             # Convert numpy dtype to torch dtype for later conversion
             torch_orig_dtype = data_t.dtype
         else:
             if not isinstance(data, torch.Tensor):
                 raise ValueError("data must be a numpy.ndarray or torch.Tensor")
-            orig_dtype = data.dtype
             torch_orig_dtype = data.dtype
             data_t = data
 

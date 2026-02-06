@@ -158,4 +158,3 @@ cdef void _resample_linear(
     free(w1_arr)
     free(fw_arr)
     free(fw1_arr)
-

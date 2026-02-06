@@ -23,11 +23,13 @@ Test Results:
 
 import numpy as np
 import pytest
+
 import volresample
 
 # Try to import torch backend
 try:
     from torch_reference import TorchReference
+
     TORCH_AVAILABLE = TorchReference.available
 except ImportError:
     TORCH_AVAILABLE = False
@@ -100,114 +102,123 @@ def test_resample_5d_area():
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch backend not available")
-@pytest.mark.parametrize("input_shape,output_size,mode", [
-    # 3D tests - nearest
-    ((64, 64, 64), (32, 32, 32), "nearest"),
-    ((128, 128, 128), (64, 64, 64), "nearest"),
-    ((32, 32, 32), (64, 64, 64), "nearest"),  # Upsampling
-    
-    # 3D tests - linear
-    ((64, 64, 64), (32, 32, 32), "linear"),
-    ((128, 128, 128), (64, 64, 64), "linear"),
-    ((32, 32, 32), (64, 64, 64), "linear"),  # Upsampling
-    
-    # 3D tests - area (downsampling)
-    ((64, 64, 64), (32, 32, 32), "area"),
-    ((128, 128, 128), (64, 64, 64), "area"),
-])
+@pytest.mark.parametrize(
+    "input_shape,output_size,mode",
+    [
+        # 3D tests - nearest
+        ((64, 64, 64), (32, 32, 32), "nearest"),
+        ((128, 128, 128), (64, 64, 64), "nearest"),
+        ((32, 32, 32), (64, 64, 64), "nearest"),  # Upsampling
+        # 3D tests - linear
+        ((64, 64, 64), (32, 32, 32), "linear"),
+        ((128, 128, 128), (64, 64, 64), "linear"),
+        ((32, 32, 32), (64, 64, 64), "linear"),  # Upsampling
+        # 3D tests - area (downsampling)
+        ((64, 64, 64), (32, 32, 32), "area"),
+        ((128, 128, 128), (64, 64, 64), "area"),
+    ],
+)
 def test_3d_torch_cython_match(input_shape, output_size, mode):
     """Test that Cython and PyTorch implementations produce identical results for 3D data."""
     # Generate test data
     data = generate_test_data(input_shape)
-    
+
     # Run both implementations
     torch_result = TorchReference().resample(data, output_size, mode=mode)
     cython_result = volresample.resample(data, output_size, mode=mode)
-    
+
     # Check shapes match
-    assert torch_result.shape == cython_result.shape, \
-        f"Shape mismatch: torch={torch_result.shape}, cython={cython_result.shape}"
-    
+    assert (
+        torch_result.shape == cython_result.shape
+    ), f"Shape mismatch: torch={torch_result.shape}, cython={cython_result.shape}"
+
     # Check values match within tolerance
     max_diff = np.max(np.abs(torch_result - cython_result))
     mean_diff = np.mean(np.abs(torch_result - cython_result))
-    
-    assert max_diff < TOLERANCE, \
-        f"Max difference {max_diff:.6e} exceeds tolerance {TOLERANCE:.6e} (mean diff: {mean_diff:.6e})"
+
+    assert (
+        max_diff < TOLERANCE
+    ), f"Max difference {max_diff:.6e} exceeds tolerance {TOLERANCE:.6e} (mean diff: {mean_diff:.6e})"
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch backend not available")
-@pytest.mark.parametrize("input_shape,output_size,mode", [
-    # 4D tests - nearest
-    ((4, 64, 64, 64), (32, 32, 32), "nearest"),
-    ((8, 128, 128, 128), (64, 64, 64), "nearest"),
-    ((2, 32, 32, 32), (64, 64, 64), "nearest"),  # Upsampling
-    
-    # 4D tests - linear
-    ((4, 64, 64, 64), (32, 32, 32), "linear"),
-    ((8, 128, 128, 128), (64, 64, 64), "linear"),
-    ((2, 32, 32, 32), (64, 64, 64), "linear"),  # Upsampling
-    
-    # 4D tests - area (downsampling)
-    ((4, 64, 64, 64), (32, 32, 32), "area"),
-    ((8, 128, 128, 128), (64, 64, 64), "area"),
-])
+@pytest.mark.parametrize(
+    "input_shape,output_size,mode",
+    [
+        # 4D tests - nearest
+        ((4, 64, 64, 64), (32, 32, 32), "nearest"),
+        ((8, 128, 128, 128), (64, 64, 64), "nearest"),
+        ((2, 32, 32, 32), (64, 64, 64), "nearest"),  # Upsampling
+        # 4D tests - linear
+        ((4, 64, 64, 64), (32, 32, 32), "linear"),
+        ((8, 128, 128, 128), (64, 64, 64), "linear"),
+        ((2, 32, 32, 32), (64, 64, 64), "linear"),  # Upsampling
+        # 4D tests - area (downsampling)
+        ((4, 64, 64, 64), (32, 32, 32), "area"),
+        ((8, 128, 128, 128), (64, 64, 64), "area"),
+    ],
+)
 def test_4d_torch_cython_match(input_shape, output_size, mode):
     """Test that Cython and PyTorch implementations produce identical results for 4D data."""
     # Generate test data
     data = generate_test_data(input_shape)
-    
+
     # Run both implementations
     torch_result = TorchReference().resample(data, output_size, mode=mode)
     cython_result = volresample.resample(data, output_size, mode=mode)
-    
+
     # Check shapes match
-    assert torch_result.shape == cython_result.shape, \
-        f"Shape mismatch: torch={torch_result.shape}, cython={cython_result.shape}"
-    
+    assert (
+        torch_result.shape == cython_result.shape
+    ), f"Shape mismatch: torch={torch_result.shape}, cython={cython_result.shape}"
+
     # Check values match within tolerance
     max_diff = np.max(np.abs(torch_result - cython_result))
     mean_diff = np.mean(np.abs(torch_result - cython_result))
-    
-    assert max_diff < TOLERANCE, \
-        f"Max difference {max_diff:.6e} exceeds tolerance {TOLERANCE:.6e} (mean diff: {mean_diff:.6e})"
+
+    assert (
+        max_diff < TOLERANCE
+    ), f"Max difference {max_diff:.6e} exceeds tolerance {TOLERANCE:.6e} (mean diff: {mean_diff:.6e})"
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch backend not available")
-@pytest.mark.parametrize("input_shape,output_size,mode", [
-    # 5D tests - nearest
-    ((2, 4, 64, 64, 64), (32, 32, 32), "nearest"),
-    ((1, 8, 128, 128, 128), (64, 64, 64), "nearest"),
-    ((3, 2, 32, 32, 32), (64, 64, 64), "nearest"),  # Upsampling
-    
-    # 5D tests - linear
-    ((2, 4, 64, 64, 64), (32, 32, 32), "linear"),
-    ((1, 8, 128, 128, 128), (64, 64, 64), "linear"),
-    ((3, 2, 32, 32, 32), (64, 64, 64), "linear"),  # Upsampling
-    
-    # 5D tests - area (downsampling)
-    ((2, 4, 64, 64, 64), (32, 32, 32), "area"),
-    ((1, 8, 128, 128, 128), (64, 64, 64), "area"),
-])
+@pytest.mark.parametrize(
+    "input_shape,output_size,mode",
+    [
+        # 5D tests - nearest
+        ((2, 4, 64, 64, 64), (32, 32, 32), "nearest"),
+        ((1, 8, 128, 128, 128), (64, 64, 64), "nearest"),
+        ((3, 2, 32, 32, 32), (64, 64, 64), "nearest"),  # Upsampling
+        # 5D tests - linear
+        ((2, 4, 64, 64, 64), (32, 32, 32), "linear"),
+        ((1, 8, 128, 128, 128), (64, 64, 64), "linear"),
+        ((3, 2, 32, 32, 32), (64, 64, 64), "linear"),  # Upsampling
+        # 5D tests - area (downsampling)
+        ((2, 4, 64, 64, 64), (32, 32, 32), "area"),
+        ((1, 8, 128, 128, 128), (64, 64, 64), "area"),
+    ],
+)
 def test_5d_torch_cython_match(input_shape, output_size, mode):
     """Test that Cython and PyTorch implementations produce identical results for 5D data."""
     # Generate test data
     data = generate_test_data(input_shape)
-    
+
     # Run both implementations
     torch_result = TorchReference().resample(data, output_size, mode=mode)
     cython_result = volresample.resample(data, output_size, mode=mode)
-    
+
     # Check shapes match
-    assert torch_result.shape == cython_result.shape, \
-        f"Shape mismatch: torch={torch_result.shape}, cython={cython_result.shape}"
-    
+    assert (
+        torch_result.shape == cython_result.shape
+    ), f"Shape mismatch: torch={torch_result.shape}, cython={cython_result.shape}"
+
     # Check values match within tolerance
     max_diff = np.max(np.abs(torch_result - cython_result))
     mean_diff = np.mean(np.abs(torch_result - cython_result))
-    
-    assert max_diff < TOLERANCE, \
-        f"Max difference {max_diff:.6e} exceeds tolerance {TOLERANCE:.6e} (mean diff: {mean_diff:.6e})"
+
+    assert (
+        max_diff < TOLERANCE
+    ), f"Max difference {max_diff:.6e} exceeds tolerance {TOLERANCE:.6e} (mean diff: {mean_diff:.6e})"
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch backend not available")
@@ -218,28 +229,31 @@ def test_small_data_torch_cython_match(mode):
     data_3d = np.arange(8, dtype=np.float32).reshape(2, 2, 2)
     torch_result_3d = TorchReference().resample(data_3d, (4, 4, 4), mode=mode)
     cython_result_3d = volresample.resample(data_3d, (4, 4, 4), mode=mode)
-    
+
     max_diff_3d = np.max(np.abs(torch_result_3d - cython_result_3d))
-    assert max_diff_3d < TOLERANCE, \
-        f"3D: Max difference {max_diff_3d:.6e} exceeds tolerance {TOLERANCE:.6e}"
-    
+    assert (
+        max_diff_3d < TOLERANCE
+    ), f"3D: Max difference {max_diff_3d:.6e} exceeds tolerance {TOLERANCE:.6e}"
+
     # Test 4D small data
     data_4d = np.arange(16, dtype=np.float32).reshape(2, 2, 2, 2)
     torch_result_4d = TorchReference().resample(data_4d, (4, 4, 4), mode=mode)
     cython_result_4d = volresample.resample(data_4d, (4, 4, 4), mode=mode)
-    
+
     max_diff_4d = np.max(np.abs(torch_result_4d - cython_result_4d))
-    assert max_diff_4d < TOLERANCE, \
-        f"4D: Max difference {max_diff_4d:.6e} exceeds tolerance {TOLERANCE:.6e}"
-    
+    assert (
+        max_diff_4d < TOLERANCE
+    ), f"4D: Max difference {max_diff_4d:.6e} exceeds tolerance {TOLERANCE:.6e}"
+
     # Test 5D small data
     data_5d = np.arange(32, dtype=np.float32).reshape(2, 2, 2, 2, 2)
     torch_result_5d = TorchReference().resample(data_5d, (4, 4, 4), mode=mode)
     cython_result_5d = volresample.resample(data_5d, (4, 4, 4), mode=mode)
-    
+
     max_diff_5d = np.max(np.abs(torch_result_5d - cython_result_5d))
-    assert max_diff_5d < TOLERANCE, \
-        f"5D: Max difference {max_diff_5d:.6e} exceeds tolerance {TOLERANCE:.6e}"
+    assert (
+        max_diff_5d < TOLERANCE
+    ), f"5D: Max difference {max_diff_5d:.6e} exceeds tolerance {TOLERANCE:.6e}"
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch backend not available")
@@ -250,35 +264,38 @@ def test_non_uniform_sizes_torch_cython_match(mode):
     data_3d = generate_test_data((100, 80, 60))
     torch_result_3d = TorchReference().resample(data_3d, (50, 40, 30), mode=mode)
     cython_result_3d = volresample.resample(data_3d, (50, 40, 30), mode=mode)
-    
+
     max_diff_3d = np.max(np.abs(torch_result_3d - cython_result_3d))
-    assert max_diff_3d < TOLERANCE, \
-        f"3D non-uniform: Max difference {max_diff_3d:.6e} exceeds tolerance {TOLERANCE:.6e}"
-    
+    assert (
+        max_diff_3d < TOLERANCE
+    ), f"3D non-uniform: Max difference {max_diff_3d:.6e} exceeds tolerance {TOLERANCE:.6e}"
+
     # Non-uniform 4D
     data_4d = generate_test_data((3, 100, 80, 60))
     torch_result_4d = TorchReference().resample(data_4d, (50, 40, 30), mode=mode)
     cython_result_4d = volresample.resample(data_4d, (50, 40, 30), mode=mode)
-    
+
     max_diff_4d = np.max(np.abs(torch_result_4d - cython_result_4d))
-    assert max_diff_4d < TOLERANCE, \
-        f"4D non-uniform: Max difference {max_diff_4d:.6e} exceeds tolerance {TOLERANCE:.6e}"
-    
+    assert (
+        max_diff_4d < TOLERANCE
+    ), f"4D non-uniform: Max difference {max_diff_4d:.6e} exceeds tolerance {TOLERANCE:.6e}"
+
     # Non-uniform 5D
     data_5d = generate_test_data((2, 3, 100, 80, 60))
     torch_result_5d = TorchReference().resample(data_5d, (50, 40, 30), mode=mode)
     cython_result_5d = volresample.resample(data_5d, (50, 40, 30), mode=mode)
-    
+
     max_diff_5d = np.max(np.abs(torch_result_5d - cython_result_5d))
-    assert max_diff_5d < TOLERANCE, \
-        f"5D non-uniform: Max difference {max_diff_5d:.6e} exceeds tolerance {TOLERANCE:.6e}"
+    assert (
+        max_diff_5d < TOLERANCE
+    ), f"5D non-uniform: Max difference {max_diff_5d:.6e} exceeds tolerance {TOLERANCE:.6e}"
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch backend not available")
 def test_thread_safety_cython():
     """Test that different thread counts don't affect correctness."""
     data = generate_test_data((64, 64, 64))
-    
+
     # Test with different thread counts using global setting
     # Skip area mode as it has known differences from PyTorch
     for threads in [1, 2, 4]:
@@ -286,10 +303,11 @@ def test_thread_safety_cython():
         for mode in ["nearest", "linear"]:
             torch_result = TorchReference().resample(data, (32, 32, 32), mode=mode)
             cython_result = volresample.resample(data, (32, 32, 32), mode=mode)
-            
+
             max_diff = np.max(np.abs(torch_result - cython_result))
-            assert max_diff < TOLERANCE, \
-                f"Mode={mode}, threads={threads}: Max difference {max_diff:.6e} exceeds tolerance"
+            assert (
+                max_diff < TOLERANCE
+            ), f"Mode={mode}, threads={threads}: Max difference {max_diff:.6e} exceeds tolerance"
 
 
 # ============================================================================
@@ -305,25 +323,25 @@ def test_dimension_size_one_3d(mode):
     data = generate_test_data((1, 16, 16))
     torch_result = TorchReference().resample(data, (1, 8, 8), mode=mode)
     cython_result = volresample.resample(data, (1, 8, 8), mode=mode)
-    
+
     assert torch_result.shape == cython_result.shape == (1, 8, 8)
     max_diff = np.max(np.abs(torch_result - cython_result))
     assert max_diff < TOLERANCE, f"1xHxW: Max diff {max_diff:.6e}"
-    
+
     # Single slice in height (D, 1, W)
     data = generate_test_data((16, 1, 16))
     torch_result = TorchReference().resample(data, (8, 1, 8), mode=mode)
     cython_result = volresample.resample(data, (8, 1, 8), mode=mode)
-    
+
     assert torch_result.shape == cython_result.shape == (8, 1, 8)
     max_diff = np.max(np.abs(torch_result - cython_result))
     assert max_diff < TOLERANCE, f"Dx1xW: Max diff {max_diff:.6e}"
-    
+
     # Single slice in width (D, H, 1)
     data = generate_test_data((16, 16, 1))
     torch_result = TorchReference().resample(data, (8, 8, 1), mode=mode)
     cython_result = volresample.resample(data, (8, 8, 1), mode=mode)
-    
+
     assert torch_result.shape == cython_result.shape == (8, 8, 1)
     max_diff = np.max(np.abs(torch_result - cython_result))
     assert max_diff < TOLERANCE, f"DxHx1: Max diff {max_diff:.6e}"
@@ -337,16 +355,16 @@ def test_dimension_size_one_4d(mode):
     data = generate_test_data((1, 1, 16, 16))
     torch_result = TorchReference().resample(data, (1, 8, 8), mode=mode)
     cython_result = volresample.resample(data, (1, 8, 8), mode=mode)
-    
+
     assert torch_result.shape == cython_result.shape == (1, 1, 8, 8)
     max_diff = np.max(np.abs(torch_result - cython_result))
     assert max_diff < TOLERANCE, f"1x1xHxW: Max diff {max_diff:.6e}"
-    
+
     # Multiple channels with size-1 spatial dimension
     data = generate_test_data((4, 16, 1, 16))
     torch_result = TorchReference().resample(data, (8, 1, 8), mode=mode)
     cython_result = volresample.resample(data, (8, 1, 8), mode=mode)
-    
+
     assert torch_result.shape == cython_result.shape == (4, 8, 1, 8)
     max_diff = np.max(np.abs(torch_result - cython_result))
     assert max_diff < TOLERANCE, f"CxDx1xW: Max diff {max_diff:.6e}"
@@ -360,18 +378,18 @@ def test_single_voxel(mode):
     data_3d = np.array([[[42.0]]], dtype=np.float32)
     torch_result = TorchReference().resample(data_3d, (4, 4, 4), mode=mode)
     cython_result = volresample.resample(data_3d, (4, 4, 4), mode=mode)
-    
+
     assert torch_result.shape == cython_result.shape == (4, 4, 4)
     # All values should be the same (interpolating a constant)
     assert np.allclose(torch_result, 42.0), "3D single voxel should produce constant output"
     max_diff = np.max(np.abs(torch_result - cython_result))
     assert max_diff < TOLERANCE, f"3D single voxel: Max diff {max_diff:.6e}"
-    
+
     # 4D single voxel per channel
     data_4d = np.array([[[[1.0]]], [[[2.0]]], [[[3.0]]]], dtype=np.float32)
     torch_result = TorchReference().resample(data_4d, (4, 4, 4), mode=mode)
     cython_result = volresample.resample(data_4d, (4, 4, 4), mode=mode)
-    
+
     assert torch_result.shape == cython_result.shape == (3, 4, 4, 4)
     max_diff = np.max(np.abs(torch_result - cython_result))
     assert max_diff < TOLERANCE, f"4D single voxel: Max diff {max_diff:.6e}"
@@ -385,25 +403,25 @@ def test_identity_resample(mode):
     data_3d = generate_test_data((32, 32, 32))
     torch_result = TorchReference().resample(data_3d, (32, 32, 32), mode=mode)
     cython_result = volresample.resample(data_3d, (32, 32, 32), mode=mode)
-    
+
     assert torch_result.shape == cython_result.shape == (32, 32, 32)
     max_diff = np.max(np.abs(torch_result - cython_result))
     assert max_diff < TOLERANCE, f"3D identity {mode}: Max diff {max_diff:.6e}"
-    
+
     # 4D identity
     data_4d = generate_test_data((4, 32, 32, 32))
     torch_result = TorchReference().resample(data_4d, (32, 32, 32), mode=mode)
     cython_result = volresample.resample(data_4d, (32, 32, 32), mode=mode)
-    
+
     assert torch_result.shape == cython_result.shape == (4, 32, 32, 32)
     max_diff = np.max(np.abs(torch_result - cython_result))
     assert max_diff < TOLERANCE, f"4D identity {mode}: Max diff {max_diff:.6e}"
-    
+
     # 5D identity
     data_5d = generate_test_data((2, 4, 32, 32, 32))
     torch_result = TorchReference().resample(data_5d, (32, 32, 32), mode=mode)
     cython_result = volresample.resample(data_5d, (32, 32, 32), mode=mode)
-    
+
     assert torch_result.shape == cython_result.shape == (2, 4, 32, 32, 32)
     max_diff = np.max(np.abs(torch_result - cython_result))
     assert max_diff < TOLERANCE, f"5D identity {mode}: Max diff {max_diff:.6e}"
@@ -417,16 +435,16 @@ def test_extreme_scale_factors(mode):
     data_small = generate_test_data((2, 2, 2))
     torch_result = TorchReference().resample(data_small, (64, 64, 64), mode=mode)
     cython_result = volresample.resample(data_small, (64, 64, 64), mode=mode)
-    
+
     assert torch_result.shape == cython_result.shape == (64, 64, 64)
     max_diff = np.max(np.abs(torch_result - cython_result))
     assert max_diff < TOLERANCE, f"Extreme upsampling {mode}: Max diff {max_diff:.6e}"
-    
+
     # Extreme downsampling (64x64x64 -> 2x2x2 = 32x reduction)
     data_large = generate_test_data((64, 64, 64))
     torch_result = TorchReference().resample(data_large, (2, 2, 2), mode=mode)
     cython_result = volresample.resample(data_large, (2, 2, 2), mode=mode)
-    
+
     assert torch_result.shape == cython_result.shape == (2, 2, 2)
     max_diff = np.max(np.abs(torch_result - cython_result))
     assert max_diff < TOLERANCE, f"Extreme downsampling {mode}: Max diff {max_diff:.6e}"
@@ -440,16 +458,16 @@ def test_prime_number_dimensions(mode):
     data_3d = generate_test_data((17, 19, 23))
     torch_result = TorchReference().resample(data_3d, (11, 13, 7), mode=mode)
     cython_result = volresample.resample(data_3d, (11, 13, 7), mode=mode)
-    
+
     assert torch_result.shape == cython_result.shape == (11, 13, 7)
     max_diff = np.max(np.abs(torch_result - cython_result))
     assert max_diff < TOLERANCE, f"Prime dims 3D {mode}: Max diff {max_diff:.6e}"
-    
+
     # 4D with prime dimensions
     data_4d = generate_test_data((3, 17, 19, 23))
     torch_result = TorchReference().resample(data_4d, (11, 13, 7), mode=mode)
     cython_result = volresample.resample(data_4d, (11, 13, 7), mode=mode)
-    
+
     assert torch_result.shape == cython_result.shape == (3, 11, 13, 7)
     max_diff = np.max(np.abs(torch_result - cython_result))
     assert max_diff < TOLERANCE, f"Prime dims 4D {mode}: Max diff {max_diff:.6e}"
@@ -463,16 +481,16 @@ def test_asymmetric_scaling(mode):
     data = generate_test_data((32, 64, 16))
     torch_result = TorchReference().resample(data, (64, 32, 32), mode=mode)
     cython_result = volresample.resample(data, (64, 32, 32), mode=mode)
-    
+
     assert torch_result.shape == cython_result.shape == (64, 32, 32)
     max_diff = np.max(np.abs(torch_result - cython_result))
     assert max_diff < TOLERANCE, f"Asymmetric 3D {mode}: Max diff {max_diff:.6e}"
-    
+
     # 4D asymmetric
     data_4d = generate_test_data((2, 32, 64, 16))
     torch_result = TorchReference().resample(data_4d, (64, 32, 32), mode=mode)
     cython_result = volresample.resample(data_4d, (64, 32, 32), mode=mode)
-    
+
     assert torch_result.shape == cython_result.shape == (2, 64, 32, 32)
     max_diff = np.max(np.abs(torch_result - cython_result))
     assert max_diff < TOLERANCE, f"Asymmetric 4D {mode}: Max diff {max_diff:.6e}"
@@ -486,12 +504,12 @@ def test_constant_value_arrays():
         data_zeros = np.zeros((16, 16, 16), dtype=np.float32)
         result = volresample.resample(data_zeros, (8, 8, 8), mode=mode)
         assert np.allclose(result, 0.0), f"{mode}: zeros should remain zeros"
-        
+
         # All ones
         data_ones = np.ones((16, 16, 16), dtype=np.float32)
         result = volresample.resample(data_ones, (8, 8, 8), mode=mode)
         assert np.allclose(result, 1.0), f"{mode}: ones should remain ones"
-        
+
         # Arbitrary constant
         data_const = np.full((16, 16, 16), 3.14159, dtype=np.float32)
         result = volresample.resample(data_const, (8, 8, 8), mode=mode)
@@ -503,42 +521,42 @@ def test_single_channel_4d():
     """Test 4D with single channel (should behave like 3D)."""
     data_3d = generate_test_data((32, 32, 32))
     data_4d = data_3d.reshape(1, 32, 32, 32)
-    
+
     for mode in ["nearest", "linear", "area"]:
         result_3d = volresample.resample(data_3d, (16, 16, 16), mode=mode)
         result_4d = volresample.resample(data_4d, (16, 16, 16), mode=mode)
-        
+
         # Results should be identical (just different shapes)
         assert result_4d.shape == (1, 16, 16, 16)
         max_diff = np.max(np.abs(result_3d - result_4d.squeeze(0)))
         assert max_diff < 1e-7, f"{mode}: 3D and 4D single channel should match exactly"
 
 
-@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch backend not available")  
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch backend not available")
 @pytest.mark.parametrize("mode", ["nearest", "linear"])
 def test_output_to_size_one(mode):
     """Test resampling to output size of 1 in one or more dimensions."""
     # Downsample to single slice
     data = generate_test_data((16, 16, 16))
-    
+
     torch_result = TorchReference().resample(data, (1, 16, 16), mode=mode)
     cython_result = volresample.resample(data, (1, 16, 16), mode=mode)
     assert torch_result.shape == cython_result.shape == (1, 16, 16)
     max_diff = np.max(np.abs(torch_result - cython_result))
     assert max_diff < TOLERANCE, f"To 1xHxW {mode}: Max diff {max_diff:.6e}"
-    
+
     torch_result = TorchReference().resample(data, (16, 1, 16), mode=mode)
     cython_result = volresample.resample(data, (16, 1, 16), mode=mode)
     assert torch_result.shape == cython_result.shape == (16, 1, 16)
     max_diff = np.max(np.abs(torch_result - cython_result))
     assert max_diff < TOLERANCE, f"To Dx1xW {mode}: Max diff {max_diff:.6e}"
-    
+
     torch_result = TorchReference().resample(data, (16, 16, 1), mode=mode)
     cython_result = volresample.resample(data, (16, 16, 1), mode=mode)
     assert torch_result.shape == cython_result.shape == (16, 16, 1)
     max_diff = np.max(np.abs(torch_result - cython_result))
     assert max_diff < TOLERANCE, f"To DxHx1 {mode}: Max diff {max_diff:.6e}"
-    
+
     # Downsample to single voxel
     torch_result = TorchReference().resample(data, (1, 1, 1), mode=mode)
     cython_result = volresample.resample(data, (1, 1, 1), mode=mode)
@@ -551,18 +569,19 @@ def test_output_to_size_one(mode):
 # Memory Layout Tests (non-C-contiguous arrays)
 # ============================================================================
 
+
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
 def test_fortran_contiguous_nearest():
     """Fortran-contiguous array should give same result as C-contiguous."""
     data_c = np.arange(27, dtype=np.float32).reshape(3, 3, 3)
     data_f = np.asfortranarray(data_c.copy())
-    
-    assert not data_f.flags['C_CONTIGUOUS']
-    assert data_f.flags['F_CONTIGUOUS']
-    
-    torch_r = TorchReference.resample(data_f, (2, 2, 2), mode='nearest')
-    cython_r = volresample.resample(data_f, (2, 2, 2), mode='nearest')
-    
+
+    assert not data_f.flags["C_CONTIGUOUS"]
+    assert data_f.flags["F_CONTIGUOUS"]
+
+    torch_r = TorchReference.resample(data_f, (2, 2, 2), mode="nearest")
+    cython_r = volresample.resample(data_f, (2, 2, 2), mode="nearest")
+
     max_diff = np.max(np.abs(torch_r - cython_r))
     assert max_diff < TOLERANCE, f"Fortran array nearest: max_diff={max_diff}"
 
@@ -572,10 +591,10 @@ def test_fortran_contiguous_linear():
     """Fortran-contiguous array with linear mode."""
     data_c = np.random.randn(16, 16, 16).astype(np.float32)
     data_f = np.asfortranarray(data_c.copy())
-    
-    torch_r = TorchReference.resample(data_f, (8, 8, 8), mode='linear')
-    cython_r = volresample.resample(data_f, (8, 8, 8), mode='linear')
-    
+
+    torch_r = TorchReference.resample(data_f, (8, 8, 8), mode="linear")
+    cython_r = volresample.resample(data_f, (8, 8, 8), mode="linear")
+
     max_diff = np.max(np.abs(torch_r - cython_r))
     assert max_diff < TOLERANCE, f"Fortran array linear: max_diff={max_diff}"
 
@@ -585,12 +604,12 @@ def test_non_contiguous_sliced():
     """Non-contiguous sliced array should give correct result."""
     data_full = np.random.randn(32, 32, 32).astype(np.float32)
     data_sliced = data_full[::2, ::2, ::2]  # Non-contiguous view
-    
-    assert not data_sliced.flags['C_CONTIGUOUS']
-    
-    torch_r = TorchReference.resample(data_sliced, (8, 8, 8), mode='linear')
-    cython_r = volresample.resample(data_sliced, (8, 8, 8), mode='linear')
-    
+
+    assert not data_sliced.flags["C_CONTIGUOUS"]
+
+    torch_r = TorchReference.resample(data_sliced, (8, 8, 8), mode="linear")
+    cython_r = volresample.resample(data_sliced, (8, 8, 8), mode="linear")
+
     max_diff = np.max(np.abs(torch_r - cython_r))
     assert max_diff < TOLERANCE, f"Sliced array: max_diff={max_diff}"
 
@@ -599,12 +618,12 @@ def test_non_contiguous_sliced():
 def test_transposed_array():
     """Transposed array should give correct result."""
     data = np.random.randn(16, 16, 16).astype(np.float32).T
-    
-    assert not data.flags['C_CONTIGUOUS']
-    
-    torch_r = TorchReference.resample(data, (8, 8, 8), mode='linear')
-    cython_r = volresample.resample(data, (8, 8, 8), mode='linear')
-    
+
+    assert not data.flags["C_CONTIGUOUS"]
+
+    torch_r = TorchReference.resample(data, (8, 8, 8), mode="linear")
+    cython_r = volresample.resample(data, (8, 8, 8), mode="linear")
+
     max_diff = np.max(np.abs(torch_r - cython_r))
     assert max_diff < TOLERANCE, f"Transposed array: max_diff={max_diff}"
 
@@ -614,10 +633,10 @@ def test_4d_fortran_contiguous():
     """4D Fortran-contiguous array."""
     data_c = np.random.randn(4, 16, 16, 16).astype(np.float32)
     data_f = np.asfortranarray(data_c.copy())
-    
-    torch_r = TorchReference.resample(data_f, (8, 8, 8), mode='linear')
-    cython_r = volresample.resample(data_f, (8, 8, 8), mode='linear')
-    
+
+    torch_r = TorchReference.resample(data_f, (8, 8, 8), mode="linear")
+    cython_r = volresample.resample(data_f, (8, 8, 8), mode="linear")
+
     max_diff = np.max(np.abs(torch_r - cython_r))
     assert max_diff < TOLERANCE, f"4D Fortran array: max_diff={max_diff}"
 
@@ -626,6 +645,7 @@ def test_4d_fortran_contiguous():
 # Area Mode Mixed Scaling Tests
 # ============================================================================
 
+
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
 def test_area_mixed_up_down_scaling():
     """Area mode with some dims upsampling, some downsampling."""
@@ -633,10 +653,10 @@ def test_area_mixed_up_down_scaling():
     # dim 0: upsample (8->16), dim 1: downsample (16->8), dim 2: upsample (32->64)
     np.random.seed(42)
     data = np.random.randn(8, 16, 32).astype(np.float32)
-    
-    torch_r = TorchReference.resample(data, (16, 8, 64), mode='area')
-    cython_r = volresample.resample(data, (16, 8, 64), mode='area')
-    
+
+    torch_r = TorchReference.resample(data, (16, 8, 64), mode="area")
+    cython_r = volresample.resample(data, (16, 8, 64), mode="area")
+
     max_diff = np.max(np.abs(torch_r - cython_r))
     assert max_diff < TOLERANCE, f"Mixed up/down scaling: max_diff={max_diff}"
 
@@ -647,10 +667,10 @@ def test_area_one_dim_upsampling():
     # 16x16x16 -> 8x8x32 (last dim upsamples)
     np.random.seed(42)
     data = np.random.randn(16, 16, 16).astype(np.float32)
-    
-    torch_r = TorchReference.resample(data, (8, 8, 32), mode='area')
-    cython_r = volresample.resample(data, (8, 8, 32), mode='area')
-    
+
+    torch_r = TorchReference.resample(data, (8, 8, 32), mode="area")
+    cython_r = volresample.resample(data, (8, 8, 32), mode="area")
+
     max_diff = np.max(np.abs(torch_r - cython_r))
     assert max_diff < TOLERANCE, f"One dim upsampling: max_diff={max_diff}"
 
@@ -661,10 +681,10 @@ def test_area_two_dims_down_one_up():
     # 16x16x8 -> 8x8x16
     np.random.seed(42)
     data = np.random.randn(16, 16, 8).astype(np.float32)
-    
-    torch_r = TorchReference.resample(data, (8, 8, 16), mode='area')
-    cython_r = volresample.resample(data, (8, 8, 16), mode='area')
-    
+
+    torch_r = TorchReference.resample(data, (8, 8, 16), mode="area")
+    cython_r = volresample.resample(data, (8, 8, 16), mode="area")
+
     max_diff = np.max(np.abs(torch_r - cython_r))
     assert max_diff < TOLERANCE, f"Two down, one up: max_diff={max_diff}"
 
@@ -674,9 +694,9 @@ def test_area_4d_mixed_scaling():
     """4D area mode with mixed scaling."""
     np.random.seed(42)
     data = np.random.randn(4, 8, 16, 8).astype(np.float32)
-    
-    torch_r = TorchReference.resample(data, (16, 8, 16), mode='area')
-    cython_r = volresample.resample(data, (16, 8, 16), mode='area')
-    
+
+    torch_r = TorchReference.resample(data, (16, 8, 16), mode="area")
+    cython_r = volresample.resample(data, (16, 8, 16), mode="area")
+
     max_diff = np.max(np.abs(torch_r - cython_r))
     assert max_diff < TOLERANCE, f"4D mixed scaling: max_diff={max_diff}"

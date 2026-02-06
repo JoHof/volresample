@@ -107,18 +107,22 @@ torch = [
 
 [dependency-groups]
 dev = [
-    "cibuildwheel>=3.2.1",
+    "cibuildwheel>=3.2.1; python_version >= '3.11'",
     "torch>=2.8.0",
     "pytest>=7.0.0",
     "pytest-cov>=3.0.0",
     "black>=22.0.0",
+    "isort>=5.13.0",
+    "ruff>=0.8.0",
     "mypy>=0.950",
+    "bandit>=1.7.0",
+    "pre-commit>=3.0.0",
     "cython>=3.0.0",
     "ipywidgets>=8.1.7",
 ]
 
 [tool.setuptools.packages.find]
-where = ["src"]  
+where = ["src"]
 include = ["volresample*"]
 
 [tool.pytest.ini_options]
@@ -132,3 +136,47 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 
+# Black and isort are replaced by ruff format and ruff lint (I rules)
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+exclude = [
+    ".git",
+    ".venv",
+    "build",
+    "dist",
+    "*.egg-info",
+    "*.pyx",
+    "*.c",
+    "*.ipynb",
+    "__pycache__",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort (import sorting)
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by ruff format)
+    "E402",  # module level import not at top of file
+    "B008",  # do not perform function calls in argument defaults
+    "C901",  # too complex
+    "F841",  # local variable assigned but never used
+]
+
+[tool.ruff.format]
+# Use double quotes for strings
+quote-style = "double"
+# Indent with spaces
+indent-style = "space"
+
+[tool.bandit]
+exclude_dirs = ["tests", "build", ".venv"]
+skips = ["B101"]  # Skip assert_used check (common in tests)

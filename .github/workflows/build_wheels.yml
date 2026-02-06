@@ -21,25 +21,25 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-13, macos-14]  # macos-13=x86, macos-14=ARM
-        
+
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      
+
       # Set up QEMU for ARM builds on Linux
       - name: Set up QEMU
         if: runner.os == 'Linux'
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
-      
+
       - name: Install cibuildwheel
         run: python -m pip install cibuildwheel==2.16.2
-      
+
       - name: Build wheels
         run: python -m cibuildwheel --output-dir wheelhouse
         env:
@@ -49,7 +49,7 @@ jobs:
           CIBW_ARCHS_MACOS: "x86_64 arm64"
           # Build for x86_64 on Windows
           CIBW_ARCHS_WINDOWS: "AMD64"
-      
+
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
@@ -62,20 +62,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      
+
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
           pip install build
-      
+
       - name: Build sdist
         run: python -m build --sdist
-      
+
       - name: Upload sdist
         uses: actions/upload-artifact@v4
         with:
@@ -95,16 +95,16 @@ jobs:
           path: dist
           pattern: wheels-*
           merge-multiple: true
-      
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
           pattern: sdist
           merge-multiple: true
-      
+
       - name: Display downloaded files
         run: ls -lR dist/
-      
+
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
@@ -122,32 +122,32 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-13]
         python-version: ['3.8', '3.9', '3.10', '3.11', '3.12', '3.13']
-    
+
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      
+
       - name: Download wheels
         uses: actions/download-artifact@v4
         with:
           path: dist
           pattern: wheels-${{ matrix.os }}
           merge-multiple: true
-      
+
       - name: Install wheel
         run: |
           python -m pip install --upgrade pip
           pip install dist/*.whl
-      
+
       - name: Test import
         run: |
           python -c "import mimage; print('✓ mimage imported successfully')"
           python -c "from mimage.backends.resampling.cpu_detection import load_best_backend; backend = load_best_backend(); print(f'✓ Loaded backend: {backend.__name__}')"
-      
+
       - name: Run tests
         run: |
           pip install pytest numpy

@@ -58,16 +58,18 @@ Thread configuration:
 __version__ = "0.1.0"
 
 # Import thread configuration (always available, pure Python)
-from volresample._config import set_num_threads, get_num_threads
+from volresample._config import get_num_threads, set_num_threads
 
 try:
-    from volresample._resample import resample, grid_sample
+    from volresample._resample import grid_sample, resample
 except ImportError as e:
     import warnings
+
     warnings.warn(
         f"Failed to import compiled Cython extensions: {e}. "
         "Please build the package with 'pip install -e .'",
-        ImportWarning
+        ImportWarning,
+        stacklevel=2,
     )
     resample = None
     grid_sample = None

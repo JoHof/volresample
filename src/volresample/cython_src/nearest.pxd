@@ -9,4 +9,3 @@ cpdef void _resample_nearest(
     int out_d, int out_h, int out_w,
     float scale_d, float scale_h, float scale_w
 ) noexcept nogil
-

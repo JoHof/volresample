@@ -9,47 +9,45 @@ it solves the symbol naming issue and keeps the build simple.
 For maximum performance in production, use the multi-arch Docker builds.
 """
 
-from setuptools import setup, Extension
-from Cython.Build import cythonize
-import numpy as np
-import platform
-import shutil
-import os
 import sys
+
+import numpy as np
+from Cython.Build import cythonize
+from setuptools import Extension, setup
 
 
 def build_extension():
     """Build single generic extension."""
-    
+
     source_file = "src/mimage/backends/resampling/resampling_cython.pyx"
-    
+
     extension = Extension(
         name="resampling_cython",
         sources=[source_file],
         include_dirs=[np.get_include()],
-        extra_compile_args=['-O3', '-fopenmp', '-mavx2', '-mfma'],  # Use native CPU features
-        extra_link_args=['-fopenmp'],
-        define_macros=[('NPY_NO_DEPRECATED_API', 'NPY_1_7_API_VERSION')],
+        extra_compile_args=["-O3", "-fopenmp", "-mavx2", "-mfma"],  # Use native CPU features
+        extra_link_args=["-fopenmp"],
+        define_macros=[("NPY_NO_DEPRECATED_API", "NPY_1_7_API_VERSION")],
     )
-    
-    print("\n" + "="*60)
+
+    print("\n" + "=" * 60)
     print("Building Cython resampling extension")
-    print("="*60)
+    print("=" * 60)
     print(f"Source: {source_file}")
-    print(f"Target: resampling_cython")
+    print("Target: resampling_cython")
     print("Flags: -O3 -fopenmp -mavx2 -mfma")
-    print("="*60 + "\n")
-    
+    print("=" * 60 + "\n")
+
     setup(
         name="resampling_cython",
         ext_modules=cythonize(
             [extension],
             compiler_directives={
-                'language_level': "3",
-                'boundscheck': False,
-                'wraparound': False,
-                'cdivision': True,
-                'initializedcheck': False,
+                "language_level": "3",
+                "boundscheck": False,
+                "wraparound": False,
+                "cdivision": True,
+                "initializedcheck": False,
             },
         ),
         script_args=sys.argv[1:],

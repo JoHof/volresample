@@ -1,12 +1,13 @@
 """Type stubs for volresample._resample Cython module."""
 
-from typing import Literal, Tuple, Union
+from typing import Literal
+
 import numpy as np
 from numpy.typing import NDArray
 
 def resample(
     data: NDArray[np.float32] | NDArray[np.uint8] | NDArray[np.int16],
-    size: Tuple[int, int, int],
+    size: tuple[int, int, int],
     mode: Literal["nearest", "linear", "area"] = "linear",
 ) -> NDArray[np.float32] | NDArray[np.uint8] | NDArray[np.int16]:
     """Resample a 3D, 4D, or 5D volume to a new size.
@@ -26,7 +27,7 @@ def resample(
         Resampled array with same number of dimensions as input.
         - For nearest mode: preserves input dtype
         - For linear/area mode: float32 output
-        
+
     Note:
         Thread count is controlled globally via volresample.set_num_threads().
         Default is min(cpu_count, 4).
@@ -79,7 +80,7 @@ def grid_sample(
 
     Returns:
         Sampled array of shape (N, C, D_out, H_out, W_out).
-        
+
     Note:
         The behavior matches PyTorch's grid_sample with align_corners=False.
         Thread count is controlled globally via volresample.set_num_threads().

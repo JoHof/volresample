@@ -200,8 +200,9 @@ for od in prange(out_d):      # Parallel
 ### Coordinate Order
 
 Grid coordinates are `(x, y, z)` order matching PyTorch:
+
 - `grid[..., 0]` = x (width)
-- `grid[..., 1]` = y (height)  
+- `grid[..., 1]` = y (height)
 - `grid[..., 2]` = z (depth)
 
 ### Padding Modes

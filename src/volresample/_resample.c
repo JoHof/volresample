@@ -7678,7 +7678,6 @@ static void __pyx_f_11volresample_9_resample__resample_linear(float *__pyx_v_dat
  *     free(w1_arr)
  *     free(fw_arr)             # <<<<<<<<<<<<<<
  *     free(fw1_arr)
- * 
 */
   free(__pyx_v_fw_arr);
 
@@ -7686,7 +7685,6 @@ static void __pyx_f_11volresample_9_resample__resample_linear(float *__pyx_v_dat
  *     free(w1_arr)
  *     free(fw_arr)
  *     free(fw1_arr)             # <<<<<<<<<<<<<<
- * 
 */
   free(__pyx_v_fw1_arr);
 

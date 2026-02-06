@@ -1,0 +1,64 @@
+# See https://pre-commit.com for more information
+# See https://pre-commit.com/hooks.html for more hooks
+repos:
+  # Basic pre-commit hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^(.*\.pyx|.*\.pxd)$
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-ast
+      - id: check-added-large-files
+        args: ['--maxkb=5000']
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+
+  # Ruff for linting, import sorting, and formatting
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+        exclude: ^tests/torch_reference\.py$
+      - id: ruff-format
+
+  # Type checking with mypy (disabled by default - uncomment to enable)
+  # - repo: https://github.com/pre-commit/mirrors-mypy
+  #   rev: v1.13.0
+  #   hooks:
+  #     - id: mypy
+  #       additional_dependencies: [numpy, types-setuptools]
+  #       exclude: ^(tests/|setup.*\.py|src/notebooks/)$
+  #       args: [--ignore-missing-imports, --warn-unused-ignores, --no-strict-optional, --allow-untyped-defs]
+
+  # Check for common security issues
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.10
+    hooks:
+      - id: bandit
+        args: ["-c", "pyproject.toml"]
+        additional_dependencies: ["bandit[toml]"]
+        types: [python]
+        exclude: ^tests/
+
+# Configuration
+default_language_version:
+  python: python3
+
+exclude: |
+  (?x)^(
+    .*\.c$|
+    build/|
+    .*\.egg-info/|
+    __pycache__/|
+    \.venv/|
+    \.pytest_cache/|
+    uv\.lock$|
+    flake\.lock$
+  )

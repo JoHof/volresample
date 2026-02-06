@@ -15,31 +15,26 @@ def pytest_addoption(parser):
         "--skip-torch",
         action="store_true",
         default=False,
-        help="Skip PyTorch comparison tests even if PyTorch is available"
+        help="Skip PyTorch comparison tests even if PyTorch is available",
     )
     parser.addoption(
         "--require-torch",
-        action="store_true", 
+        action="store_true",
         default=False,
-        help="Fail if PyTorch is not available (for CI validation)"
+        help="Fail if PyTorch is not available (for CI validation)",
     )
 
 
 def pytest_configure(config):
     """Configure pytest with custom markers."""
-    config.addinivalue_line(
-        "markers",
-        "torch: tests that require PyTorch backend for comparison"
-    )
-    config.addinivalue_line(
-        "markers", 
-        "slow: slow running tests"
-    )
-    
+    config.addinivalue_line("markers", "torch: tests that require PyTorch backend for comparison")
+    config.addinivalue_line("markers", "slow: slow running tests")
+
     # Check PyTorch availability if required
     if config.getoption("--require-torch"):
         try:
             from torch_reference import TorchReference
+
             if not TorchReference.available:
                 raise ImportError("PyTorch is required but not available")
         except ImportError as e:
@@ -55,9 +50,10 @@ def pytest_collection_modifyitems(config, items):
         skip_torch = True
     else:
         skip_torch = False
-    
+
     if skip_torch:
         import pytest
+
         skip_marker = pytest.mark.skip(reason="PyTorch tests skipped (--skip-torch flag)")
         for item in items:
             # Skip tests that have @pytest.mark.skipif(not TORCH_AVAILABLE, ...)

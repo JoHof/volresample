@@ -20,12 +20,12 @@ def _get_default_threads():
 
 def set_num_threads(num_threads: int) -> None:
     """Set the number of threads used for parallel operations.
-    
+
     This affects all volresample operations (resample, grid_sample).
-    
+
     Args:
         num_threads: Number of threads to use. Must be >= 1.
-        
+
     Examples:
         >>> import volresample
         >>> volresample.set_num_threads(4)
@@ -40,10 +40,10 @@ def set_num_threads(num_threads: int) -> None:
 
 def get_num_threads() -> int:
     """Get the number of threads used for parallel operations.
-    
+
     Returns:
         The current number of threads.
-        
+
     Examples:
         >>> import volresample
         >>> volresample.get_num_threads()  # Returns default: min(cpu_count, 4)
