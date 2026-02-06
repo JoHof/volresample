@@ -77,6 +77,9 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
+# ruff linter
+.ruff_cache/
+
 # pytype
 .pytype/
 
@@ -92,3 +95,6 @@ cython_debug/
 # OS files
 .DS_Store
 Thumbs.db
+
+# dev files
+src/notebooks/
