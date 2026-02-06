@@ -128,28 +128,6 @@ def get_cython_extensions():
     return extensions
 
 
-def get_long_description():
-    """Read the long description from README.md."""
-    try:
-        with open("README.md", encoding="utf-8") as f:
-            return f.read()
-    except FileNotFoundError:
-        return "Fast 3D volume resampling with optimized Cython"
-
-
-# Read version from package
-def get_version():
-    """Get version from pyproject.toml or set default."""
-    try:
-        import tomli
-
-        with open("pyproject.toml", "rb") as f:
-            pyproject = tomli.load(f)
-            return pyproject["project"]["version"]
-    except Exception:
-        return "0.1.0"  # Fallback
-
-
 def main():
     """Main setup function."""
 
@@ -178,32 +156,15 @@ def main():
     else:
         ext_modules = []
 
+    # All metadata (name, version, dependencies, etc.) lives in pyproject.toml.
+    # setup.py only provides build-time extension configuration.
     setup(
-        name="volresample",
-        version=get_version(),
-        description="Fast 3D volume resampling with optimized Cython",
-        long_description=get_long_description(),
-        long_description_content_type="text/markdown",
-        author="Johannes",
-        author_email="j.hofmanninger@gmail.com",
-        url="https://github.com/JoHof/volresample",
         packages=find_packages(where="src"),
         package_dir={"": "src"},
         ext_modules=ext_modules,
-        # Wheel should only contain runtime artifacts.
-        # Cython sources (.pyx/.pxd) and generated .c belong in sdist only.
-        # (include-package-data = false in pyproject.toml enforces this)
         package_data={"volresample": ["*.pyi", "py.typed"]},
-        install_requires=[
-            "numpy>=1.20.0",
-        ],
-        python_requires=">=3.9",
-        # Note: metadata (name, version, classifiers, license, etc.) is
-        # authoritative in pyproject.toml [project].  Only build/extension
-        # logic belongs here.
-        keywords="medical imaging resampling interpolation cython",
         cmdclass={"build_ext": BuildExtWithArchDetection},
-        zip_safe=False,  # Required for Cython extensions
+        zip_safe=False,
     )
 
 

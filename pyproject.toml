@@ -5,7 +5,7 @@ description = "Fast 3D volume resampling with optimized Cython"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
-    "numpy>=1.21.0",
+    "numpy>=2.0.0",
 ]
 authors = [
     {name = "Johannes", email = "j.hofmanninger@gmail.com"}
@@ -33,10 +33,11 @@ Repository = "https://github.com/JoHof/volresample"
 
 [build-system]
 requires = [
-    "setuptools>=45",
+    "setuptools>=68",
+    "packaging>=24.2",
     "wheel",
     "Cython>=3.0.0",
-    "numpy>=1.20.0",
+    "numpy>=2.0.0",
 ]
 build-backend = "setuptools.build_meta"
 
