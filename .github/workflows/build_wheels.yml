@@ -22,8 +22,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macos-15-large = Intel x86_64, macos-15 = Apple Silicon ARM64
-        os: [ubuntu-latest, windows-latest, macos-15]
+        # Linux: x86_64 + aarch64 (via QEMU)
+        # macOS: macos-15-intel (Intel x86_64), macos-15 (Apple Silicon ARM64)
+        # Windows: AMD64
+        os: [ubuntu-latest, windows-latest, macos-15-intel, macos-15]
 
     steps:
       - uses: actions/checkout@v4
@@ -82,8 +84,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-15]
+        os: [ubuntu-latest, windows-latest, macos-15-intel, macos-15]
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        exclude:
+          # Python 3.9 doesn't support macOS ARM64, skip that combination
+          - os: macos-15
+            python-version: "3.9"
 
     steps:
       - uses: actions/checkout@v4

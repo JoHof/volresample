@@ -46,7 +46,8 @@ build-backend = "setuptools.build_meta"
 build = ["cp39-*", "cp310-*", "cp311-*", "cp312-*", "cp313-*"]
 
 # Skip PyPy, musllinux (for simplicity), and 32-bit builds
-skip = ["pp*", "*-musllinux*", "*-win32", "*-manylinux_i686"]
+# Python 3.9 doesn't support macOS ARM64 officially
+skip = ["pp*", "*-musllinux*", "*-win32", "*-manylinux_i686", "cp39-macosx_arm64"]
 
 # Build for multiple architectures
 # x86_64 on Linux, macOS, Windows
@@ -70,6 +71,7 @@ test-skip = ["*-manylinux_aarch64"]  # Skip tests on QEMU-emulated platforms onl
 # Platform-specific settings
 [tool.cibuildwheel.linux]
 # Use uv for much faster dependency resolution (especially Python 3.11+)
+archs = ["x86_64", "aarch64"]
 build-frontend = "build[uv]"
 manylinux-x86_64-image = "manylinux_2_28"
 manylinux-aarch64-image = "manylinux_2_28"
