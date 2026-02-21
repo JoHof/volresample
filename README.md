@@ -166,25 +166,37 @@ Get the current number of threads used for parallel operations.
 
 ## Performance
 
-Benchmarks comparing volresample vs PyTorch 2.8.0 on Intel CPU (i7-8565U) with 4 threads:
+Benchmarks on an Intel i7-8565U against PyTorch 2.8.0. Times are means over 10 iterations.
 
-| Operation | Size | Mode | volresample | PyTorch | Speedup |
-|-----------|------|------|-------------|---------|---------|
-| Resample | 64³ → 32³ | nearest | 0.01 ms | 0.10 ms | 8x |
-| Resample | 512³ → 256³ | nearest | 15 ms | 18 ms | 1.3x |
-| Resample | 512³ → 256³ | linear | 43 ms | 61 ms | 1.4x |
-| Resample | 512³ → 256³ | area | 74 ms | 663 ms | 9x |
-| Resample | 512³ → 256³ | nearest (uint8) | 5 ms | 14 ms | 2.6x |
-| Resample | 512³ → 256³ | nearest (int16) | 9 ms | 161 ms | 18x |
-| Grid sample | 128³ → 96³ | linear | 59 ms | 232 ms | 4x |
+**`resample()`** — single large 3D volume:
 
-**Notes on speedups:**
+| Operation   | Mode            | **Single-thread** |         |           | **Four-threads** |         |          |
+| ----------- | --------------- | ----------------- | ------- | :-------: | ---------------- | ------- | :------: |
+|             |                 | volresample       | PyTorch |  Speedup  | volresample      | PyTorch |  Speedup |
+| 512³ → 256³ | nearest         | 23.6 ms           | 38.0 ms |    1.6×   | 12.6 ms          | 16.7 ms |   1.3×   |
+| 512³ → 256³ | linear          | 99.9 ms           | 182 ms  |    1.8×   | 34.3 ms          | 54.6 ms |   1.6×   |
+| 512³ → 256³ | area            | 230 ms            | 611 ms  |    2.7×   | 64.5 ms          | 613 ms  | **9.5×** |
+| 512³ → 256³ | nearest (uint8) | 13.7 ms           | 33.8 ms |    2.5×   | 4.3 ms           | 10.4 ms |   2.4×   |
+| 512³ → 256³ | nearest (int16) | 16.5 ms           | 217 ms  | **13.2×** | 8.4 ms           | 93.2 ms |   11.2×  |
 
-- **Estimates**: These are estimates on a single CPU, improvements might differ based on CPU, system load, input size etc.
-- **Area mode (9x)**: volresample uses a direct area-weighted computation optimized for the resampling use case and parallelizes accross the first image dimension. Pytorch seems to parallelize over batch and channel dimension which is not favorable in a single image, single channel benchmark.
-- **int16 (18x)**: PyTorch does not natively support int16 for interpolation and requires casting to float32 and back, adding memory bandwidth and conversion overhead. volresample operates directly on int16 data.
-- **uint8 (2.6x)**: PyTorch supports uint8 natively for nearest mode, so the speedup is more "modest".
-- **Grid sample (4x)**: The Cython implementation avoids Python overhead and uses cache-friendly memory access patterns.
+
+**`grid_sample()`** — single large 3D volume (128³ input):
+
+| Mode   | Padding    | **Single-thread** |         |         | **Four-threads** |         |         |
+| ------ | ---------- | ----------------- | ------- | :-----: | ---------------- | ------- | :-----: |
+|        |            | volresample       | PyTorch | Speedup | volresample      | PyTorch | Speedup |
+| linear | zeros      | 118 ms            | 181 ms  |   1.5×  | 38.1 ms          | 169 ms  |   4.4×  |
+| linear | reflection | 103 ms            | 211 ms  |   2.1×  | 33.2 ms          | 194 ms  |   5.9×  |
+
+
+Average speedup across all benchmarks: **3.1× at 1 thread**, **6.0× at 4 threads**.
+
+**Notes:**
+
+- **Area mode**: At 1 thread the speedup is 2.7×; at 4 threads it reaches 9.5×. PyTorch's area interpolation does not appear to parallelize over spatial dimensions for single-image workloads — its runtime is essentially unchanged between 1 and 4 threads (611 ms vs. 613 ms). volresample parallelizes along the first spatial dimension, reducing runtime from 230 ms to 65 ms with 4 threads.
+- **int16**: PyTorch does not support int16 interpolation natively and requires casting to float32, processing, then casting back. volresample operates directly on int16, eliminating two full-volume type conversions. The advantage is large even at 1 thread (13.2×) and persists at 4 threads because the conversion overhead scales with data volume, not thread count.
+- **Thread scaling**: For large volumes, volresample typically halves wall time going from 1 to 4 threads on nearest and linear modes. Grid sample scales more strongly (1.5× → 4.4× for linear) because per-voxel work is higher. PyTorch scaling is more variable, and negligible for area mode.
+- **These are estimates** on a single machine under light load. Actual results will vary with CPU architecture, memory bandwidth, and system conditions.
 
 ## Development
 
