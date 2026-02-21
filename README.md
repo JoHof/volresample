@@ -166,7 +166,7 @@ Get the current number of threads used for parallel operations.
 
 ## Performance
 
-Benchmarks comparing volresample vs PyTorch 2.8.0 on Intel CPU with 4 threads:
+Benchmarks comparing volresample vs PyTorch 2.8.0 on Intel CPU (i7-8565U) with 4 threads:
 
 | Operation | Size | Mode | volresample | PyTorch | Speedup |
 |-----------|------|------|-------------|---------|---------|
@@ -180,9 +180,10 @@ Benchmarks comparing volresample vs PyTorch 2.8.0 on Intel CPU with 4 threads:
 
 **Notes on speedups:**
 
+- **Estimates**: These are estimates on a single CPU, improvements might differ based on CPU, system load, input size etc.
 - **Area mode (9x)**: volresample uses a direct area-weighted computation optimized for the resampling use case and parallelizes accross the first image dimension. Pytorch seems to parallelize over batch and channel dimension which is not favorable in a single image, single channel benchmark.
 - **int16 (18x)**: PyTorch does not natively support int16 for interpolation and requires casting to float32 and back, adding memory bandwidth and conversion overhead. volresample operates directly on int16 data.
-- **uint8 (2.6x)**: PyTorch supports uint8 natively for nearest mode, so the speedup is more modest.
+- **uint8 (2.6x)**: PyTorch supports uint8 natively for nearest mode, so the speedup is more "modest".
 - **Grid sample (4x)**: The Cython implementation avoids Python overhead and uses cache-friendly memory access patterns.
 
 ## Development
