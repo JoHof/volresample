@@ -7,6 +7,7 @@ Fast 3D volume resampling with Cython and OpenMP parallelization.
 
 Implemented against PyTorch's `F.interpolate` and `F.grid_sample` as a reference, producing identical results. Can be used as a drop-in replacement when PyTorch is not available or when better performance is desired on CPU.
 
+[Blogpost](https://johof.github.io/2026/02/volresample-3d-volume-resampling/)
 ## Features
 
 - Cython-optimized with OpenMP parallelization
