@@ -1,18 +1,16 @@
-# Cubic B-spline resampling implementation (included via main file)
+# Cubic B-spline resampling — high-performance implementation
 # Matches scipy.ndimage.zoom(order=3, mode='reflect', grid_mode=True)
-#
-# Algorithm:
-#   1. Separable IIR prefilter converts samples -> B-spline coefficients
-#   2. Evaluate cubic B-spline basis at target positions
-# Boundary: reflect100 (scipy 'reflect' = half-sample symmetric)
-# Coordinate: src = (i + 0.5) * (in_size / out_size) - 0.5
+
+from libc.string cimport memcpy
+
+# Prefetch hint
+cdef extern from * nogil:
+    void __builtin_prefetch(const void* addr, int rw, int locality)
 
 # ---------------------------------------------------------------------------
 # Boundary helper: reflect100 (scipy 'reflect')
-# Pattern: ... d c b | a b c d | d c b a ...
 # ---------------------------------------------------------------------------
 cdef inline int _reflect100(int i, int size) noexcept nogil:
-    """Map index i into [0, size-1] using half-sample symmetric reflection."""
     cdef int period
     if size == 1:
         return 0
@@ -25,107 +23,192 @@ cdef inline int _reflect100(int i, int size) noexcept nogil:
     return i
 
 # ---------------------------------------------------------------------------
-# Cubic B-spline basis weights for fractional offset t in [0, 1)
-# Taps at offsets -1, 0, +1, +2 relative to floor(src)
+# Cubic B-spline basis weights
 # ---------------------------------------------------------------------------
-cdef inline void _cubic_weights(double t, double* w) noexcept nogil:
-    """Compute 4 cubic B-spline weights for fractional offset t.
-
-    w[0] = (1-t)^3 / 6          tap at floor(src) - 1
-    w[1] = (4 - 6t^2 + 3t^3)/6  tap at floor(src)
-    w[2] = (4 - 6u^2 + 3u^3)/6  tap at floor(src) + 1  (u = 1-t)
-    w[3] = t^3 / 6              tap at floor(src) + 2
-    """
-    cdef double t2 = t * t
-    cdef double t3 = t2 * t
-    cdef double u = 1.0 - t
-    cdef double u2 = u * u
-    cdef double u3 = u2 * u
+cdef inline void _cubic_weights_f(float t, float* w) noexcept nogil:
+    cdef float t2 = t * t
+    cdef float t3 = t2 * t
+    cdef float u = 1.0 - t
+    cdef float u2 = u * u
+    cdef float u3 = u2 * u
     w[0] = u3 / 6.0
     w[1] = (4.0 - 6.0 * t2 + 3.0 * t3) / 6.0
     w[2] = (4.0 - 6.0 * u2 + 3.0 * u3) / 6.0
     w[3] = t3 / 6.0
 
 # ---------------------------------------------------------------------------
-# IIR B-spline prefilter (causal + anticausal passes)
-# Cubic B-spline pole: z1 = -2 + sqrt(3) ≈ -0.26794919243112
+# IIR B-spline prefilter — double precision
+# Uses contiguous temp buffers for strided axes to ensure IIR runs in L1.
+# Gain fused into strided copy-in to avoid a separate pass.
+# Software prefetch for large-stride axis 0.
 # ---------------------------------------------------------------------------
 
 cdef double POLE = -0.2679491924311228  # -2 + sqrt(3)
-cdef double GAIN = 6.0  # overall gain = 6 for cubic B-spline
+cdef double GAIN = 6.0
 
 
-cdef void _prefilter_1d_inplace(double* data, int size, int stride) noexcept nogil:
-    """Apply cubic B-spline IIR prefilter to a 1D signal in-place.
-
-    The signal is accessed as data[i * stride].
-    Boundary: reflect (half-sample symmetric), matching scipy NI_EXTEND_REFLECT.
-    Algorithm from scipy's ni_splines.c (_init_causal_reflect / _init_anticausal_reflect).
-    Uses double precision to match scipy's internal accuracy.
+cdef inline void _prefilter_1d_inplace(double* data, int size,
+                                       double z_n) noexcept nogil:
+    """IIR B-spline prefilter on contiguous stride-1 data, in-place.
+    Applies gain internally.  z_n = z^size (precomputed).
     """
     cdef double z = POLE
-    cdef double lambda_val = GAIN
+    cdef double g = GAIN
     cdef int i
-    cdef double z_n, z_i, s
+    cdef double z_i, s
 
-    if size == 1:
+    if size <= 1:
         return
 
-    # --- Apply gain ---
+    # Apply gain
     for i in range(size):
-        data[i * stride] = data[i * stride] * lambda_val
+        data[i] = data[i] * g
 
-    # --- Causal init (scipy _init_causal_reflect) ---
-    # For half-sample symmetric boundary:
-    #   sum = c[0] + z^n * c[n-1]
-    #   for i = 1..n-1:  sum += z^i * (c[i] + z^n * c[n-1-i])
-    #   c[0] += sum * z / (1 - z^(2n))
-    z_n = z
-    for i in range(1, size):
-        z_n = z_n * z  # z_n = z^size after loop
-    # z_n is now z^size
+    # Causal init (full reflect boundary — correct for half-sample symmetric)
     z_i = z
-    s = data[0] + z_n * data[(size - 1) * stride]
+    s = data[0] + z_n * data[size - 1]
     for i in range(1, size):
-        s = s + z_i * (data[i * stride] + z_n * data[(size - 1 - i) * stride])
+        s = s + z_i * (data[i] + z_n * data[size - 1 - i])
         z_i = z_i * z
     data[0] = data[0] + s * z / (1.0 - z_n * z_n)
 
-    # --- Causal recursion ---
+    # Causal recursion
     for i in range(1, size):
-        data[i * stride] = data[i * stride] + z * data[(i - 1) * stride]
+        data[i] = data[i] + z * data[i - 1]
 
-    # --- Anticausal init (scipy _init_anticausal_reflect) ---
-    # For half-sample symmetric: c[n-1] *= z / (z - 1)
-    data[(size - 1) * stride] = data[(size - 1) * stride] * z / (z - 1.0)
+    # Anticausal init
+    data[size - 1] = data[size - 1] * z / (z - 1.0)
 
-    # --- Anticausal recursion ---
+    # Anticausal recursion
     for i in range(size - 2, -1, -1):
-        data[i * stride] = z * (data[(i + 1) * stride] - data[i * stride])
+        data[i] = z * (data[i + 1] - data[i])
 
 
 cdef void _prefilter_3d(double* data, int d, int h, int w) noexcept nogil:
-    """Apply separable cubic B-spline prefilter along all 3 axes.
+    """Separable cubic B-spline prefilter along all 3 axes.
 
-    Modifies data in-place. Data is stored in row-major (D, H, W) order.
-    Stride for axis 0 (depth) = h*w, axis 1 (height) = w, axis 2 (width) = 1.
+    - Axis 2 (width,  stride=1):   in-place
+    - Axis 1 (height, stride=w):   per-thread contiguous temp
+    - Axis 0 (depth,  stride=h*w): per-thread contiguous temp + prefetch
     """
-    cdef int i, j
+    cdef int i, j, k, hw = h * w
+    cdef int max_line = d if d > h else h
+    cdef int nt = omp_get_max_threads()
+    cdef double* temps = <double*>malloc(nt * max_line * sizeof(double))
+    if temps == NULL:
+        return
+    cdef int tid
+    cdef double* temp
 
-    # Along width (axis 2): stride=1, length=w
-    for i in range(d):
-        for j in range(h):
-            _prefilter_1d_inplace(&data[i * h * w + j * w], w, 1)
+    # Precompute z^N for each axis (avoids O(N-1) serial multiplies per line)
+    cdef double z = POLE
+    cdef double zz
+    cdef double z_n_w, z_n_h, z_n_d
+    zz = z
+    for i in range(1, w):
+        zz = zz * z
+    z_n_w = zz
+    zz = z
+    for i in range(1, h):
+        zz = zz * z
+    z_n_h = zz
+    zz = z
+    for i in range(1, d):
+        zz = zz * z
+    z_n_d = zz
 
-    # Along height (axis 1): stride=w, length=h
-    for i in range(d):
+    # --- Axis 2 (width): stride=1, in-place ---
+    for i in prange(d * h, schedule='static'):
+        _prefilter_1d_inplace(&data[i * w], w, z_n_w)
+
+    # --- Axis 1 (height): stride=w, per-thread temp ---
+    # Process per depth slice to keep working set in L2
+    for i in prange(d, schedule='static'):
+        tid = omp_get_thread_num()
+        temp = &temps[tid * max_line]
         for j in range(w):
-            _prefilter_1d_inplace(&data[i * h * w + j], h, w)
+            # Copy strided -> contiguous with gain fused
+            for k in range(h):
+                temp[k] = data[i * hw + j + k * w] * GAIN
+            # Filter contiguous data (all in L1)
+            _prefilter_1d_core_gained(temp, h, z_n_h)
+            # Copy back
+            for k in range(h):
+                data[i * hw + j + k * w] = temp[k]
 
-    # Along depth (axis 0): stride=h*w, length=d
-    for i in range(h):
-        for j in range(w):
-            _prefilter_1d_inplace(&data[i * w + j], d, h * w)
+    # --- Axis 0 (depth): stride=h*w, per-thread temp + prefetch ---
+    for i in prange(hw, schedule='static'):
+        tid = omp_get_thread_num()
+        temp = &temps[tid * max_line]
+        # Copy strided -> contiguous with gain fused + prefetch
+        for k in range(d):
+            if k + 8 < d:
+                __builtin_prefetch(&data[(k + 8) * hw + i], 0, 0)
+            temp[k] = data[k * hw + i] * GAIN
+        # Filter in L1
+        _prefilter_1d_core_gained(temp, d, z_n_d)
+        # Copy back with prefetch
+        for k in range(d):
+            if k + 8 < d:
+                __builtin_prefetch(&data[(k + 8) * hw + i], 1, 0)
+            data[k * hw + i] = temp[k]
+
+    free(temps)
+
+
+cdef inline void _prefilter_1d_core_gained(double* data, int size,
+                                            double z_n) noexcept nogil:
+    """IIR B-spline prefilter on contiguous data that ALREADY has gain applied.
+    z_n = z^size (precomputed).
+    """
+    cdef double z = POLE
+    cdef int i
+    cdef double z_i, s
+
+    if size <= 1:
+        return
+
+    # Causal init (full reflect boundary)
+    z_i = z
+    s = data[0] + z_n * data[size - 1]
+    for i in range(1, size):
+        s = s + z_i * (data[i] + z_n * data[size - 1 - i])
+        z_i = z_i * z
+    data[0] = data[0] + s * z / (1.0 - z_n * z_n)
+
+    # Causal recursion
+    for i in range(1, size):
+        data[i] = data[i] + z * data[i - 1]
+
+    # Anticausal init
+    data[size - 1] = data[size - 1] * z / (z - 1.0)
+
+    # Anticausal recursion
+    for i in range(size - 2, -1, -1):
+        data[i] = z * (data[i + 1] - data[i])
+
+
+# ---------------------------------------------------------------------------
+# Build reflected index LUT for one axis
+# ---------------------------------------------------------------------------
+cdef void _build_index_lut(int* idx_lut, float* weights, int out_size,
+                           int in_size, float scale) noexcept nogil:
+    cdef int i, tap, base_idx
+    cdef double src, src_floor, t
+    cdef float wt[4]
+
+    for i in range(out_size):
+        src = (<double>i + 0.5) * <double>scale - 0.5
+        src_floor = floor(src)
+        base_idx = <int>src_floor
+        t = src - src_floor
+        _cubic_weights_f(<float>t, wt)
+        weights[i * 4 + 0] = wt[0]
+        weights[i * 4 + 1] = wt[1]
+        weights[i * 4 + 2] = wt[2]
+        weights[i * 4 + 3] = wt[3]
+        for tap in range(4):
+            idx_lut[i * 4 + tap] = _reflect100(base_idx + tap - 1, in_size)
 
 
 # ---------------------------------------------------------------------------
@@ -138,112 +221,89 @@ cdef void _resample_cubic(
     int out_d, int out_h, int out_w,
     float scale_d, float scale_h, float scale_w
 ) noexcept nogil:
-    """Tricubic B-spline resampling matching scipy.ndimage.zoom(order=3).
-
-    1. Copy input into a working buffer
-    2. Apply separable IIR prefilter (in-place) -> B-spline coefficients
-    3. For each output voxel, evaluate the separable cubic B-spline kernel
-
-    The approach is NOT separable in the evaluation (we do full 4x4x4 stencil)
-    to avoid allocating large intermediate buffers. For production-quality
-    performance with very large volumes, a separable approach would be faster.
-    """
     cdef int total_in = in_d * in_h * in_w
     cdef int in_hw = in_h * in_w
     cdef int out_hw = out_h * out_w
 
-    # Allocate double-precision working copy for prefilter.
-    # Using double precision matches scipy's internal accuracy and avoids
-    # float32 rounding errors accumulating through the IIR filter recursion.
-    cdef double* coeffs = <double*>malloc(total_in * sizeof(double))
-    if coeffs == NULL:
+    # --- Stage 1: Copy to double and prefilter ---
+    cdef double* coeffs_d = <double*>malloc(total_in * sizeof(double))
+    if coeffs_d == NULL:
         return
 
-    # Copy input (float32) to double-precision coeffs buffer
     cdef int i
-    for i in range(total_in):
-        coeffs[i] = <double>data_ptr[i]
+    for i in prange(total_in, schedule='static'):
+        coeffs_d[i] = <double>data_ptr[i]
 
-    # Apply separable prefilter -> B-spline coefficients (in double precision)
-    _prefilter_3d(coeffs, in_d, in_h, in_w)
+    _prefilter_3d(coeffs_d, in_d, in_h, in_w)
 
-    # Pre-compute per-axis weights and indices
-    # For each output index along each axis, store: base index + 4 weights
-    cdef int* d_base = <int*>malloc(out_d * sizeof(int))
-    cdef double* d_w = <double*>malloc(out_d * 4 * sizeof(double))
-    cdef int* h_base = <int*>malloc(out_h * sizeof(int))
-    cdef double* h_w = <double*>malloc(out_h * 4 * sizeof(double))
-    cdef int* w_base = <int*>malloc(out_w * sizeof(int))
-    cdef double* w_w = <double*>malloc(out_w * 4 * sizeof(double))
+    # --- Stage 2: Convert to float32 for evaluation ---
+    cdef float* coeffs = <float*>malloc(total_in * sizeof(float))
+    if coeffs == NULL:
+        free(coeffs_d)
+        return
 
-    cdef double src, src_floor, t
-    cdef int base
+    for i in prange(total_in, schedule='static'):
+        coeffs[i] = <float>coeffs_d[i]
 
-    # Pre-compute depth
-    for i in range(out_d):
-        src = (i + 0.5) * scale_d - 0.5
-        src_floor = floor(src)
-        base = <int>src_floor
-        t = src - src_floor
-        d_base[i] = base
-        _cubic_weights(t, &d_w[i * 4])
+    free(coeffs_d)
 
-    # Pre-compute height
-    for i in range(out_h):
-        src = (i + 0.5) * scale_h - 0.5
-        src_floor = floor(src)
-        base = <int>src_floor
-        t = src - src_floor
-        h_base[i] = base
-        _cubic_weights(t, &h_w[i * 4])
+    # --- Stage 3: Pre-compute index LUTs and weights ---
+    cdef int* d_idx = <int*>malloc(out_d * 4 * sizeof(int))
+    cdef float* d_w  = <float*>malloc(out_d * 4 * sizeof(float))
+    cdef int* h_idx = <int*>malloc(out_h * 4 * sizeof(int))
+    cdef float* h_w  = <float*>malloc(out_h * 4 * sizeof(float))
+    cdef int* w_idx = <int*>malloc(out_w * 4 * sizeof(int))
+    cdef float* w_w  = <float*>malloc(out_w * 4 * sizeof(float))
 
-    # Pre-compute width
-    for i in range(out_w):
-        src = (i + 0.5) * scale_w - 0.5
-        src_floor = floor(src)
-        base = <int>src_floor
-        t = src - src_floor
-        w_base[i] = base
-        _cubic_weights(t, &w_w[i * 4])
+    _build_index_lut(d_idx, d_w, out_d, in_d, scale_d)
+    _build_index_lut(h_idx, h_w, out_h, in_h, scale_h)
+    _build_index_lut(w_idx, w_w, out_w, in_w, scale_w)
 
-    # Pre-compute reflected indices for each axis
-    # d_base ranges from approx -1 to in_d, so offset -1..+2 covers -2..in_d+2
-    # We'll compute them on-the-fly to keep memory bounded.
+    # --- Stage 4: Pre-compute row offsets ---
+    cdef int* h_row_off = <int*>malloc(out_h * 4 * sizeof(int))
+    cdef int oh, tap
+    for oh in range(out_h):
+        for tap in range(4):
+            h_row_off[oh * 4 + tap] = h_idx[oh * 4 + tap] * in_w
 
-    # Main interpolation loop: 4x4x4 stencil per output voxel
-    cdef int od, oh, ow
-    cdef int dd, hh, ww
-    cdef int di, hi, wi
-    cdef double wd, wh, ww_val
-    cdef double val
-    cdef int out_idx
+    # --- Stage 5: Evaluate tricubic stencil ---
+    cdef int od, ow
+    cdef int dd, hh
+    cdef int slice_off, row_off
+    cdef float wd, wdh
+    cdef float val
+    cdef int od4, oh4, ow4
 
     for od in prange(out_d, schedule='static'):
+        od4 = od * 4
         for oh in range(out_h):
+            oh4 = oh * 4
             for ow in range(out_w):
+                ow4 = ow * 4
                 val = 0.0
 
                 for dd in range(4):
-                    di = _reflect100(d_base[od] + dd - 1, in_d)
-                    wd = d_w[od * 4 + dd]
+                    slice_off = d_idx[od4 + dd] * in_hw
+                    wd = d_w[od4 + dd]
 
                     for hh in range(4):
-                        hi = _reflect100(h_base[oh] + hh - 1, in_h)
-                        wh = h_w[oh * 4 + hh]
+                        row_off = slice_off + h_row_off[oh4 + hh]
+                        wdh = wd * h_w[oh4 + hh]
 
-                        for ww in range(4):
-                            wi = _reflect100(w_base[ow] + ww - 1, in_w)
-                            ww_val = w_w[ow * 4 + ww]
+                        val = val + wdh * (
+                            w_w[ow4    ] * coeffs[row_off + w_idx[ow4    ]] +
+                            w_w[ow4 + 1] * coeffs[row_off + w_idx[ow4 + 1]] +
+                            w_w[ow4 + 2] * coeffs[row_off + w_idx[ow4 + 2]] +
+                            w_w[ow4 + 3] * coeffs[row_off + w_idx[ow4 + 3]])
 
-                            val = val + wd * wh * ww_val * coeffs[di * in_hw + hi * in_w + wi]
+                output_ptr[od * out_hw + oh * out_w + ow] = val
 
-                output_ptr[od * out_hw + oh * out_w + ow] = <float>val
-
-    # Free all allocations
+    # --- Cleanup ---
     free(coeffs)
-    free(d_base)
+    free(d_idx)
     free(d_w)
-    free(h_base)
+    free(h_idx)
     free(h_w)
-    free(w_base)
+    free(w_idx)
     free(w_w)
+    free(h_row_off)

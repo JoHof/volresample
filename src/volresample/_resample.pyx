@@ -16,6 +16,8 @@ from volresample._config import get_num_threads
 
 cdef extern from "omp.h":
     int omp_set_num_threads(int)
+    int omp_get_thread_num() noexcept nogil
+    int omp_get_max_threads() noexcept nogil
 
 cnp.import_array()
 
