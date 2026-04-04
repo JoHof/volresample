@@ -24,6 +24,7 @@ include "cython_src/utils.pyx"
 include "cython_src/nearest.pyx"
 include "cython_src/linear.pyx"
 include "cython_src/area.pyx"
+include "cython_src/cubic.pyx"
 include "cython_src/grid_sample.pyx"
 
 
@@ -110,7 +111,7 @@ def resample(
         data: Input array, shape (D, H, W), (C, D, H, W), or (N, C, D, H, W). 
               Supports uint8, int16, float32.
         size: Output size (D, H, W).
-        mode: Interpolation mode - 'nearest', 'linear', 'area'.
+        mode: Interpolation mode - 'nearest', 'linear', 'area', 'cubic'.
         
     Returns:
         Resampled array with same number of dimensions as input.
@@ -226,8 +227,26 @@ cdef object _resample_channel(
             _resample_area(data_ptr, output_ptr, in_d, in_h, in_w, out_d, out_h, out_w, scale_d, scale_h, scale_w)
         return output
     
+    elif mode == "cubic":
+        # Cubic B-spline matching scipy.ndimage.zoom(order=3, mode='reflect', grid_mode=True)
+        data_f32 = np.ascontiguousarray(data, dtype=np.float32)
+        
+        # Identity fast-path: when output size == input size, just copy
+        # (matches scipy behavior: prefilter + eval at integer coords = identity)
+        if in_d == out_d and in_h == out_h and in_w == out_w:
+            return data_f32.copy()
+        
+        output = np.empty((out_d, out_h, out_w), dtype=np.float32)
+        data_ptr = <float*>cnp.PyArray_DATA(data_f32)
+        output_ptr = <float*>cnp.PyArray_DATA(output)
+        
+        # Release GIL for parallel execution
+        with nogil:
+            _resample_cubic(data_ptr, output_ptr, in_d, in_h, in_w, out_d, out_h, out_w, scale_d, scale_h, scale_w)
+        return output
+    
     else:
-        raise ValueError(f"Unsupported mode: {mode}. Use 'nearest', 'linear', or 'area'.")
+        raise ValueError(f"Unsupported mode: {mode}. Use 'nearest', 'linear', 'area', or 'cubic'.")
 
 
 def grid_sample(

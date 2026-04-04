@@ -5,16 +5,16 @@
 
 Fast 3D volume resampling with Cython and OpenMP parallelization.
 
-Implemented against PyTorch's `F.interpolate` and `F.grid_sample` as a reference, producing identical results. Can be used as a drop-in replacement when PyTorch is not available or when better performance is desired on CPU.
+Implemented against PyTorch's `F.interpolate` and `F.grid_sample` as a reference, producing identical results for nearest, linear, and area modes. The cubic mode matches `scipy.ndimage.zoom(order=3, mode='reflect', grid_mode=True)` instead. Can be used as a drop-in replacement when PyTorch or SciPy is not available or when better performance is desired on CPU.
 
 [Blogpost](https://johof.github.io/2026/02/volresample-3d-volume-resampling/)
 ## Features
 
 - Cython-optimized with OpenMP parallelization
 - Simple API: `resample()` and `grid_sample()`
-- Interpolation modes: nearest, linear and area
+- Interpolation modes: nearest, linear, area, and cubic
 - Supports 3D and 4D (multi-channel) volumes
-- Supports uint8, int16 (nearest) and float32 dtypes (all)
+- Supports uint8, int16 (nearest) and float32 dtypes (all other modes)
 
 ## Installation
 
@@ -44,6 +44,13 @@ volume = np.random.rand(128, 128, 128).astype(np.float32)
 # Resample to a different size
 resampled = volresample.resample(volume, (64, 64, 64), mode='linear')
 print(resampled.shape)  # (64, 64, 64)
+```
+
+### Cubic Resampling (scipy-compatible)
+
+```python
+# Cubic B-spline resampling — matches scipy.ndimage.zoom(order=3)
+resampled = volresample.resample(volume, (64, 64, 64), mode='cubic')
 ```
 
 ### Multi-Channel Volumes
@@ -110,6 +117,7 @@ Resample a 3D, 4D, or 5D volume to a new size.
   - `'nearest'`: Nearest neighbor (works with all dtypes)
   - `'linear'`: Trilinear interpolation (float32 only)
   - `'area'`: Area-based averaging (float32 only, suited for downsampling)
+  - `'cubic'`: Tricubic B-spline interpolation with IIR prefilter (float32 only). Matches `scipy.ndimage.zoom(order=3, mode='reflect', grid_mode=True)`
 
 **PyTorch correspondence:**
 
@@ -121,12 +129,18 @@ Resample a 3D, 4D, or 5D volume to a new size.
 
 volresample does not expose an `align_corners` parameter. The behavior matches PyTorch's `align_corners=False` (the default).
 
+**SciPy correspondence:**
+
+| volresample | SciPy |
+|-------------|-------|
+| `mode='cubic'` | `scipy.ndimage.zoom(order=3, mode='reflect', grid_mode=True)` |
+
 **Returns:**
 - Resampled array with same number of dimensions as input
 
 **Supported Dtypes:**
 - `uint8`, `int16`: Only with `mode='nearest'`
-- `float32`: All modes
+- `float32`: All modes (`nearest`, `linear`, `area`, `cubic`)
 
 ### `grid_sample(input, grid, mode='linear', padding_mode='zeros')`
 

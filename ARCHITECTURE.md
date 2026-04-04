@@ -22,6 +22,7 @@ src/volresample/
     ├── nearest.pyx      # Nearest neighbor interpolation
     ├── linear.pyx       # Trilinear interpolation
     ├── area.pyx         # Area-based resampling
+    ├── cubic.pyx        # Cubic B-spline interpolation with IIR prefilter
     └── grid_sample.pyx  # Grid sampling implementation
 ```
 
@@ -34,6 +35,7 @@ include "cython_src/utils.pyx"
 include "cython_src/nearest.pyx"
 include "cython_src/linear.pyx"
 include "cython_src/area.pyx"
+include "cython_src/cubic.pyx"
 include "cython_src/grid_sample.pyx"
 ```
 
@@ -78,7 +80,7 @@ cdef void _resample_nearest(numeric_type* data_ptr, ...) noexcept nogil:
     # Single implementation, compiled for each type
 ```
 
-Linear and area modes only support `float32` (interpolation requires floating point).
+Linear, area, and cubic modes only support `float32` (interpolation requires floating point).
 
 ### 2. Pre-computed Index Tables
 
@@ -154,6 +156,16 @@ For `grid_sample`, normalized coordinates in `[-1, 1]` map to pixel coordinates:
 # align_corners=False formula
 pixel = ((coord + 1) / 2) * size - 0.5
 ```
+
+### 7. Cubic B-spline Interpolation
+
+The cubic mode implements tricubic B-spline interpolation matching `scipy.ndimage.zoom(order=3, mode='reflect', grid_mode=True)`. Unlike the other modes which directly compute output values, cubic interpolation is a two-stage process:
+
+1. **IIR prefilter**: A separable in-place infinite impulse response filter along each axis converts sample values into B-spline coefficients. This uses causal and anticausal passes with pole `z = sqrt(3) - 2` and reflect (half-sample symmetric) boundary conditions. The initialization formulas match scipy's `_init_causal_reflect` and `_init_anticausal_reflect` from `ni_splines.c`.
+
+2. **Evaluation**: For each output voxel, compute source coordinates, determine the 4×4×4 neighborhood of B-spline coefficients, apply the cubic B-spline basis weights, and accumulate the result.
+
+An identity fast-path skips both stages when the input and output sizes match, returning a copy of the input directly.
 
 ## Parallelization Strategy
 
@@ -250,13 +262,18 @@ Performance-oriented directives disable runtime checks:
 
 ## Testing
 
-Tests compare against PyTorch to verify numerical correctness:
+Tests compare against PyTorch (nearest, linear, area) and SciPy (cubic) to verify numerical correctness:
 
 ```python
 # tests/test_resampling.py, tests/test_grid_sample.py
 torch_output = F.interpolate(input, size, mode='trilinear')
 cython_output = volresample.resample(input, size, mode='linear')
 assert np.allclose(torch_output, cython_output, atol=1e-5)
+
+# Cubic tests compare against scipy.ndimage.zoom
+scipy_output = scipy.ndimage.zoom(input, zoom, order=3, mode='reflect', grid_mode=True)
+cython_output = volresample.resample(input, size, mode='cubic')
+assert np.allclose(scipy_output, cython_output, atol=1e-6)
 ```
 
 The `TorchReference` class in `tests/torch_reference.py` provides a consistent interface for PyTorch operations with mode name mapping (e.g., `linear` → `trilinear`).

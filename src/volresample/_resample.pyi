@@ -8,7 +8,7 @@ from numpy.typing import NDArray
 def resample(
     data: NDArray[np.float32] | NDArray[np.uint8] | NDArray[np.int16],
     size: tuple[int, int, int],
-    mode: Literal["nearest", "linear", "area"] = "linear",
+    mode: Literal["nearest", "linear", "area", "cubic"] = "linear",
 ) -> NDArray[np.float32] | NDArray[np.uint8] | NDArray[np.int16]:
     """Resample a 3D, 4D, or 5D volume to a new size.
 
@@ -22,6 +22,8 @@ def resample(
             - 'linear': Trilinear interpolation (float32 only).
               Corresponds to PyTorch's 'trilinear'.
             - 'area': Area-based averaging (float32 only, suited for downsampling).
+            - 'cubic': Cubic B-spline interpolation (float32 only).
+              Matches scipy.ndimage.zoom(order=3, mode='reflect', grid_mode=True).
 
     Returns:
         Resampled array with same number of dimensions as input.

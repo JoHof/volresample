@@ -97,6 +97,134 @@ def test_resample_5d_area():
 
 
 # ============================================================================
+# Cubic B-spline tests (vs scipy.ndimage.zoom order=3)
+# ============================================================================
+
+
+def _scipy_cubic(vol, out_shape):
+    """Reference: scipy zoom order=3, mode='reflect', grid_mode=True."""
+    from scipy.ndimage import zoom
+
+    factors = tuple(o / i for o, i in zip(out_shape, vol.shape[-3:]))
+    return zoom(vol.astype(np.float64), factors, order=3, mode="reflect", grid_mode=True).astype(
+        np.float32
+    )
+
+
+def test_resample_3d_cubic_basic():
+    arr = np.arange(8, dtype=np.float32).reshape(2, 2, 2)
+    out = volresample.resample(arr, (4, 4, 4), mode="cubic")
+    assert out.shape == (4, 4, 4)
+    assert np.issubdtype(out.dtype, np.floating)
+
+
+def test_resample_3d_cubic_constant():
+    """Constant volume should stay constant after cubic resampling."""
+    arr = np.full((8, 8, 8), 2.5, dtype=np.float32)
+    out = volresample.resample(arr, (16, 16, 16), mode="cubic")
+    assert np.allclose(out, 2.5, atol=1e-5)
+
+
+def test_resample_4d_cubic():
+    arr = np.arange(16, dtype=np.float32).reshape(2, 2, 2, 2)
+    out = volresample.resample(arr, (4, 4, 4), mode="cubic")
+    assert out.shape == (2, 4, 4, 4)
+
+
+def test_resample_5d_cubic():
+    arr = np.arange(32, dtype=np.float32).reshape(2, 2, 2, 2, 2)
+    out = volresample.resample(arr, (4, 4, 4), mode="cubic")
+    assert out.shape == (2, 2, 4, 4, 4)
+
+
+@pytest.mark.parametrize(
+    "input_shape,output_size",
+    [
+        ((8, 8, 8), (16, 16, 16)),  # upsample 2x iso
+        ((16, 16, 16), (8, 8, 8)),  # downsample 0.5x iso
+        ((10, 10, 10), (10, 10, 10)),  # identity
+        ((6, 8, 10), (4, 16, 5)),  # anisotropic mixed
+        ((32, 32, 32), (64, 64, 64)),  # larger upsample iso
+        ((64, 64, 64), (32, 32, 32)),  # larger downsample iso
+        ((12, 24, 48), (24, 48, 96)),  # non-square upsample 2x
+        ((48, 24, 12), (24, 12, 6)),  # non-square downsample 0.5x
+        ((10, 20, 30), (10, 20, 30)),  # non-square identity
+        ((7, 13, 19), (11, 17, 23)),  # non-square primes
+        ((16, 32, 64), (8, 64, 32)),  # non-square mixed up/down
+        ((100, 50, 25), (50, 100, 50)),  # non-square large mixed
+    ],
+)
+def test_cubic_vs_scipy(input_shape, output_size):
+    """Cubic B-spline matches scipy.ndimage.zoom(order=3, mode='reflect', grid_mode=True)."""
+    rng = np.random.RandomState(42)
+    data = rng.randn(*input_shape).astype(np.float32)
+    out = volresample.resample(data, output_size, mode="cubic")
+    ref = _scipy_cubic(data, output_size)
+    assert out.shape == ref.shape
+    assert np.allclose(
+        out, ref, atol=5e-4
+    ), f"max_err={np.max(np.abs(out.astype(np.float64) - ref.astype(np.float64))):.2e}"
+
+
+def test_cubic_thread_determinism():
+    """Cubic results must be identical regardless of thread count."""
+    rng = np.random.RandomState(123)
+    data = rng.randn(16, 16, 16).astype(np.float32)
+    out_size = (24, 24, 24)
+
+    volresample.set_num_threads(1)
+    ref = volresample.resample(data, out_size, mode="cubic")
+    for nt in [2, 4]:
+        volresample.set_num_threads(nt)
+        out = volresample.resample(data, out_size, mode="cubic")
+        assert np.array_equal(ref, out), f"Thread count {nt} differs from 1"
+
+    volresample.set_num_threads(4)  # restore
+
+
+@pytest.mark.parametrize(
+    "shape",
+    [
+        (10, 10, 10),
+        (12, 24, 48),
+        (7, 13, 19),
+        (64, 64, 64),
+    ],
+)
+def test_cubic_identity_fast_path(shape):
+    """Identity (same size) must return an exact copy of the input."""
+    rng = np.random.RandomState(42)
+    data = rng.randn(*shape).astype(np.float32)
+    out = volresample.resample(data, shape, mode="cubic")
+    assert np.array_equal(out, data), "Identity should be an exact copy"
+    # Verify it's a new array, not the same buffer
+    assert out is not data
+
+
+def test_cubic_non_square_4d():
+    """4D non-square cubic resampling."""
+    rng = np.random.RandomState(42)
+    data = rng.randn(3, 12, 24, 48).astype(np.float32)
+    out = volresample.resample(data, (24, 48, 96), mode="cubic")
+    assert out.shape == (3, 24, 48, 96)
+    for c in range(3):
+        ref = _scipy_cubic(data[c], (24, 48, 96))
+        assert np.allclose(out[c], ref, atol=5e-4)
+
+
+def test_cubic_non_square_5d():
+    """5D non-square cubic resampling."""
+    rng = np.random.RandomState(42)
+    data = rng.randn(2, 2, 6, 12, 18).astype(np.float32)
+    out = volresample.resample(data, (12, 24, 36), mode="cubic")
+    assert out.shape == (2, 2, 12, 24, 36)
+    for n in range(2):
+        for c in range(2):
+            ref = _scipy_cubic(data[n, c], (12, 24, 36))
+            assert np.allclose(out[n, c], ref, atol=5e-4)
+
+
+# ============================================================================
 # Torch vs Cython Comparison Tests (exact match verification)
 # ============================================================================
 
