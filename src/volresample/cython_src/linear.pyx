@@ -12,7 +12,8 @@ cdef void _resample_linear(
     float* output_ptr,
     int in_d, int in_h, int in_w,
     int out_d, int out_h, int out_w,
-    float scale_d, float scale_h, float scale_w
+    float scale_d, float scale_h, float scale_w,
+    bint align_corners
 ) noexcept nogil:
     """
     Trilinear resampling for arbitrary scale factors.
@@ -47,7 +48,13 @@ cdef void _resample_linear(
     
     # Pre-compute depth weights and indices
     for i in range(out_d):
-        src = (i + 0.5) * scale_d - 0.5
+        if align_corners:
+            if out_d > 1:
+                src = <float>(<double>i * <double>(in_d - 1) / <double>(out_d - 1))
+            else:
+                src = 0.0
+        else:
+            src = (i + 0.5) * scale_d - 0.5
         src_floor = floor(src)
         idx0 = <int>src_floor
         idx1 = idx0 + 1
@@ -64,7 +71,13 @@ cdef void _resample_linear(
     
     # Pre-compute height weights and indices
     for i in range(out_h):
-        src = (i + 0.5) * scale_h - 0.5
+        if align_corners:
+            if out_h > 1:
+                src = <float>(<double>i * <double>(in_h - 1) / <double>(out_h - 1))
+            else:
+                src = 0.0
+        else:
+            src = (i + 0.5) * scale_h - 0.5
         src_floor = floor(src)
         idx0 = <int>src_floor
         idx1 = idx0 + 1
@@ -81,7 +94,13 @@ cdef void _resample_linear(
     
     # Pre-compute width weights and indices
     for i in range(out_w):
-        src = (i + 0.5) * scale_w - 0.5
+        if align_corners:
+            if out_w > 1:
+                src = <float>(<double>i * <double>(in_w - 1) / <double>(out_w - 1))
+            else:
+                src = 0.0
+        else:
+            src = (i + 0.5) * scale_w - 0.5
         src_floor = floor(src)
         idx0 = <int>src_floor
         idx1 = idx0 + 1

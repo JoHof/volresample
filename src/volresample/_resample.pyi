@@ -9,6 +9,7 @@ def resample(
     data: NDArray[np.float32] | NDArray[np.uint8] | NDArray[np.int16],
     size: tuple[int, int, int],
     mode: Literal["nearest", "linear", "area", "cubic"] = "linear",
+    align_corners: bool = False,
 ) -> NDArray[np.float32] | NDArray[np.uint8] | NDArray[np.int16]:
     """Resample a 3D, 4D, or 5D volume to a new size.
 
@@ -24,6 +25,12 @@ def resample(
             - 'area': Area-based averaging (float32 only, suited for downsampling).
             - 'cubic': Cubic B-spline interpolation (float32 only).
               Matches scipy.ndimage.zoom(order=3, mode='reflect', grid_mode=True).
+        align_corners: If True, corner voxels of input and output are aligned,
+            preserving values at the corners. Only supported for 'linear' and
+            'cubic' modes. Default False.
+            - For 'linear': matches PyTorch's trilinear with align_corners=True.
+            - For 'cubic': matches scipy.ndimage.zoom(order=3, mode='reflect',
+              grid_mode=False).
 
     Returns:
         Resampled array with same number of dimensions as input.

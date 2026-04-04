@@ -225,6 +225,327 @@ def test_cubic_non_square_5d():
 
 
 # ============================================================================
+# align_corners=True tests
+# ============================================================================
+
+
+def test_align_corners_invalid_modes():
+    """align_corners=True should raise ValueError for nearest and area modes."""
+    arr = np.ones((4, 4, 4), dtype=np.float32)
+    with pytest.raises(ValueError, match="align_corners"):
+        volresample.resample(arr, (2, 2, 2), mode="nearest", align_corners=True)
+    with pytest.raises(ValueError, match="align_corners"):
+        volresample.resample(arr, (2, 2, 2), mode="area", align_corners=True)
+
+
+def test_linear_align_corners_basic():
+    """Basic linear resampling with align_corners=True."""
+    arr = np.arange(8, dtype=np.float32).reshape(2, 2, 2)
+    out = volresample.resample(arr, (4, 4, 4), mode="linear", align_corners=True)
+    assert out.shape == (4, 4, 4)
+    assert np.issubdtype(out.dtype, np.floating)
+    # Corner values should be preserved exactly
+    assert np.isclose(out[0, 0, 0], arr[0, 0, 0], atol=1e-6)
+    assert np.isclose(out[-1, -1, -1], arr[-1, -1, -1], atol=1e-6)
+
+
+def test_linear_align_corners_constant():
+    """Constant volume should stay constant with align_corners=True."""
+    arr = np.full((8, 8, 8), 3.5, dtype=np.float32)
+    out = volresample.resample(arr, (16, 16, 16), mode="linear", align_corners=True)
+    assert np.allclose(out, 3.5, atol=1e-5)
+
+
+def test_linear_align_corners_4d():
+    """4D linear resampling with align_corners=True."""
+    arr = np.arange(16, dtype=np.float32).reshape(2, 2, 2, 2)
+    out = volresample.resample(arr, (4, 4, 4), mode="linear", align_corners=True)
+    assert out.shape == (2, 4, 4, 4)
+
+
+def test_linear_align_corners_5d():
+    """5D linear resampling with align_corners=True."""
+    arr = np.arange(32, dtype=np.float32).reshape(2, 2, 2, 2, 2)
+    out = volresample.resample(arr, (4, 4, 4), mode="linear", align_corners=True)
+    assert out.shape == (2, 2, 4, 4, 4)
+
+
+def test_linear_align_corners_false_unchanged():
+    """Verify align_corners=False gives same result as before (no regression)."""
+    rng = np.random.RandomState(42)
+    data = rng.randn(16, 16, 16).astype(np.float32)
+    out_default = volresample.resample(data, (8, 8, 8), mode="linear")
+    out_explicit = volresample.resample(data, (8, 8, 8), mode="linear", align_corners=False)
+    assert np.array_equal(out_default, out_explicit)
+
+
+def test_cubic_align_corners_false_unchanged():
+    """Verify align_corners=False gives same result as before (no regression)."""
+    rng = np.random.RandomState(42)
+    data = rng.randn(16, 16, 16).astype(np.float32)
+    out_default = volresample.resample(data, (8, 8, 8), mode="cubic")
+    out_explicit = volresample.resample(data, (8, 8, 8), mode="cubic", align_corners=False)
+    assert np.array_equal(out_default, out_explicit)
+
+
+def test_cubic_align_corners_basic():
+    """Basic cubic resampling with align_corners=True."""
+    arr = np.arange(8, dtype=np.float32).reshape(2, 2, 2)
+    out = volresample.resample(arr, (4, 4, 4), mode="cubic", align_corners=True)
+    assert out.shape == (4, 4, 4)
+    assert np.issubdtype(out.dtype, np.floating)
+
+
+def test_cubic_align_corners_constant():
+    """Constant volume should stay constant with cubic align_corners=True."""
+    arr = np.full((8, 8, 8), 2.5, dtype=np.float32)
+    out = volresample.resample(arr, (16, 16, 16), mode="cubic", align_corners=True)
+    assert np.allclose(out, 2.5, atol=1e-5)
+
+
+def test_cubic_align_corners_4d():
+    """4D cubic with align_corners=True."""
+    arr = np.arange(16, dtype=np.float32).reshape(2, 2, 2, 2)
+    out = volresample.resample(arr, (4, 4, 4), mode="cubic", align_corners=True)
+    assert out.shape == (2, 4, 4, 4)
+
+
+def test_cubic_align_corners_5d():
+    """5D cubic with align_corners=True."""
+    arr = np.arange(32, dtype=np.float32).reshape(2, 2, 2, 2, 2)
+    out = volresample.resample(arr, (4, 4, 4), mode="cubic", align_corners=True)
+    assert out.shape == (2, 2, 4, 4, 4)
+
+
+def _scipy_cubic_align_corners(vol, out_shape):
+    """Reference: scipy zoom order=3, mode='reflect', grid_mode=False (align_corners=True)."""
+    from scipy.ndimage import zoom
+
+    factors = tuple(o / i for o, i in zip(out_shape, vol.shape[-3:]))
+    return zoom(vol.astype(np.float64), factors, order=3, mode="reflect", grid_mode=False).astype(
+        np.float32
+    )
+
+
+@pytest.mark.parametrize(
+    "input_shape,output_size",
+    [
+        ((8, 8, 8), (16, 16, 16)),  # upsample 2x iso
+        ((16, 16, 16), (8, 8, 8)),  # downsample 0.5x iso
+        ((10, 10, 10), (10, 10, 10)),  # identity
+        ((6, 8, 10), (4, 16, 5)),  # anisotropic mixed
+        ((32, 32, 32), (64, 64, 64)),  # larger upsample iso
+        ((64, 64, 64), (32, 32, 32)),  # larger downsample iso
+        ((12, 24, 48), (24, 48, 96)),  # non-square upsample 2x
+        ((7, 13, 19), (11, 17, 23)),  # non-square primes
+        ((16, 32, 64), (8, 64, 32)),  # non-square mixed up/down
+    ],
+)
+def test_cubic_align_corners_vs_scipy(input_shape, output_size):
+    """Cubic align_corners=True matches scipy zoom(order=3, mode='reflect', grid_mode=False)."""
+    rng = np.random.RandomState(42)
+    data = rng.randn(*input_shape).astype(np.float32)
+    out = volresample.resample(data, output_size, mode="cubic", align_corners=True)
+    ref = _scipy_cubic_align_corners(data, output_size)
+    assert out.shape == ref.shape
+    assert np.allclose(
+        out, ref, atol=5e-4
+    ), f"max_err={np.max(np.abs(out.astype(np.float64) - ref.astype(np.float64))):.2e}"
+
+
+def test_cubic_align_corners_identity():
+    """Cubic identity with align_corners=True should return exact copy."""
+    rng = np.random.RandomState(42)
+    data = rng.randn(10, 10, 10).astype(np.float32)
+    out = volresample.resample(data, (10, 10, 10), mode="cubic", align_corners=True)
+    assert np.array_equal(out, data), "Identity should be exact copy"
+
+
+def test_cubic_align_corners_4d_vs_scipy():
+    """4D cubic align_corners=True matches scipy per channel."""
+    rng = np.random.RandomState(42)
+    data = rng.randn(3, 12, 24, 48).astype(np.float32)
+    out = volresample.resample(data, (24, 48, 96), mode="cubic", align_corners=True)
+    assert out.shape == (3, 24, 48, 96)
+    for c in range(3):
+        ref = _scipy_cubic_align_corners(data[c], (24, 48, 96))
+        assert np.allclose(out[c], ref, atol=5e-4)
+
+
+def test_cubic_align_corners_thread_determinism():
+    """Cubic align_corners=True results identical regardless of thread count."""
+    rng = np.random.RandomState(123)
+    data = rng.randn(16, 16, 16).astype(np.float32)
+    out_size = (24, 24, 24)
+
+    volresample.set_num_threads(1)
+    ref = volresample.resample(data, out_size, mode="cubic", align_corners=True)
+    for nt in [2, 4]:
+        volresample.set_num_threads(nt)
+        out = volresample.resample(data, out_size, mode="cubic", align_corners=True)
+        assert np.array_equal(ref, out), f"Thread count {nt} differs from 1"
+
+    volresample.set_num_threads(4)  # restore
+
+
+# ============================================================================
+# Torch vs Cython: align_corners=True tests (linear mode)
+# ============================================================================
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch backend not available")
+@pytest.mark.parametrize(
+    "input_shape,output_size",
+    [
+        # 3D tests
+        ((64, 64, 64), (32, 32, 32)),
+        ((32, 32, 32), (64, 64, 64)),  # Upsampling
+        ((128, 128, 128), (64, 64, 64)),
+        ((17, 19, 23), (11, 13, 7)),  # Prime dimensions
+        ((32, 64, 16), (64, 32, 32)),  # Asymmetric
+    ],
+)
+def test_3d_linear_align_corners_torch_match(input_shape, output_size):
+    """Linear align_corners=True matches PyTorch trilinear align_corners=True for 3D."""
+    data = generate_test_data(input_shape)
+    torch_result = TorchReference().resample(data, output_size, mode="linear", align_corners=True)
+    cython_result = volresample.resample(data, output_size, mode="linear", align_corners=True)
+
+    assert torch_result.shape == cython_result.shape
+    max_diff = np.max(np.abs(torch_result - cython_result))
+    assert max_diff < TOLERANCE, f"Max difference {max_diff:.6e} exceeds tolerance {TOLERANCE:.6e}"
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch backend not available")
+@pytest.mark.parametrize(
+    "input_shape,output_size",
+    [
+        ((4, 64, 64, 64), (32, 32, 32)),
+        ((2, 32, 32, 32), (64, 64, 64)),  # Upsampling
+        ((8, 128, 128, 128), (64, 64, 64)),
+    ],
+)
+def test_4d_linear_align_corners_torch_match(input_shape, output_size):
+    """Linear align_corners=True matches PyTorch for 4D."""
+    data = generate_test_data(input_shape)
+    torch_result = TorchReference().resample(data, output_size, mode="linear", align_corners=True)
+    cython_result = volresample.resample(data, output_size, mode="linear", align_corners=True)
+
+    assert torch_result.shape == cython_result.shape
+    max_diff = np.max(np.abs(torch_result - cython_result))
+    assert max_diff < TOLERANCE, f"Max difference {max_diff:.6e} exceeds tolerance {TOLERANCE:.6e}"
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch backend not available")
+@pytest.mark.parametrize(
+    "input_shape,output_size",
+    [
+        ((2, 4, 64, 64, 64), (32, 32, 32)),
+        ((3, 2, 32, 32, 32), (64, 64, 64)),  # Upsampling
+    ],
+)
+def test_5d_linear_align_corners_torch_match(input_shape, output_size):
+    """Linear align_corners=True matches PyTorch for 5D."""
+    data = generate_test_data(input_shape)
+    torch_result = TorchReference().resample(data, output_size, mode="linear", align_corners=True)
+    cython_result = volresample.resample(data, output_size, mode="linear", align_corners=True)
+
+    assert torch_result.shape == cython_result.shape
+    max_diff = np.max(np.abs(torch_result - cython_result))
+    assert max_diff < TOLERANCE, f"Max difference {max_diff:.6e} exceeds tolerance {TOLERANCE:.6e}"
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch backend not available")
+def test_linear_align_corners_corner_preservation():
+    """With align_corners=True, corner values must be exactly preserved."""
+    data = generate_test_data((8, 8, 8))
+    out = volresample.resample(data, (16, 16, 16), mode="linear", align_corners=True)
+    # Corners of the output should match corners of the input
+    assert np.isclose(out[0, 0, 0], data[0, 0, 0], atol=1e-6)
+    assert np.isclose(out[-1, -1, -1], data[-1, -1, -1], atol=1e-6)
+    assert np.isclose(out[0, 0, -1], data[0, 0, -1], atol=1e-6)
+    assert np.isclose(out[-1, 0, 0], data[-1, 0, 0], atol=1e-6)
+    assert np.isclose(out[0, -1, 0], data[0, -1, 0], atol=1e-6)
+    assert np.isclose(out[-1, -1, 0], data[-1, -1, 0], atol=1e-6)
+    assert np.isclose(out[-1, 0, -1], data[-1, 0, -1], atol=1e-6)
+    assert np.isclose(out[0, -1, -1], data[0, -1, -1], atol=1e-6)
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch backend not available")
+def test_linear_align_corners_identity():
+    """Identity resampling with align_corners=True matches torch."""
+    data = generate_test_data((32, 32, 32))
+    torch_result = TorchReference().resample(data, (32, 32, 32), mode="linear", align_corners=True)
+    cython_result = volresample.resample(data, (32, 32, 32), mode="linear", align_corners=True)
+
+    max_diff = np.max(np.abs(torch_result - cython_result))
+    assert max_diff < TOLERANCE, f"Identity align_corners: Max diff {max_diff:.6e}"
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch backend not available")
+def test_linear_align_corners_single_voxel():
+    """Single voxel with align_corners=True."""
+    data_3d = np.array([[[42.0]]], dtype=np.float32)
+    torch_result = TorchReference().resample(data_3d, (4, 4, 4), mode="linear", align_corners=True)
+    cython_result = volresample.resample(data_3d, (4, 4, 4), mode="linear", align_corners=True)
+
+    assert np.allclose(torch_result, 42.0), "Single voxel should produce constant output"
+    max_diff = np.max(np.abs(torch_result - cython_result))
+    assert max_diff < TOLERANCE, f"Single voxel align_corners: Max diff {max_diff:.6e}"
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch backend not available")
+def test_linear_align_corners_extreme_scales():
+    """Extreme scale factors with align_corners=True."""
+    # Extreme upsampling
+    data_small = generate_test_data((2, 2, 2))
+    torch_result = TorchReference().resample(
+        data_small, (64, 64, 64), mode="linear", align_corners=True
+    )
+    cython_result = volresample.resample(
+        data_small, (64, 64, 64), mode="linear", align_corners=True
+    )
+    max_diff = np.max(np.abs(torch_result - cython_result))
+    assert max_diff < TOLERANCE, f"Extreme up align_corners: Max diff {max_diff:.6e}"
+
+    # Extreme downsampling
+    data_large = generate_test_data((64, 64, 64))
+    torch_result = TorchReference().resample(
+        data_large, (2, 2, 2), mode="linear", align_corners=True
+    )
+    cython_result = volresample.resample(data_large, (2, 2, 2), mode="linear", align_corners=True)
+    max_diff = np.max(np.abs(torch_result - cython_result))
+    assert max_diff < TOLERANCE, f"Extreme down align_corners: Max diff {max_diff:.6e}"
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch backend not available")
+def test_linear_align_corners_size_one_dim():
+    """align_corners=True with output dimension of size 1."""
+    data = generate_test_data((16, 16, 16))
+    for out_size in [(1, 16, 16), (16, 1, 16), (16, 16, 1), (1, 1, 1)]:
+        torch_result = TorchReference().resample(data, out_size, mode="linear", align_corners=True)
+        cython_result = volresample.resample(data, out_size, mode="linear", align_corners=True)
+        assert torch_result.shape == cython_result.shape == out_size
+        max_diff = np.max(np.abs(torch_result - cython_result))
+        assert max_diff < TOLERANCE, f"Size {out_size} align_corners: Max diff {max_diff:.6e}"
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch backend not available")
+def test_linear_align_corners_thread_safety():
+    """Thread count shouldn't affect align_corners=True results."""
+    data = generate_test_data((64, 64, 64))
+    for threads in [1, 2, 4]:
+        volresample.set_num_threads(threads)
+        torch_result = TorchReference().resample(
+            data, (32, 32, 32), mode="linear", align_corners=True
+        )
+        cython_result = volresample.resample(data, (32, 32, 32), mode="linear", align_corners=True)
+        max_diff = np.max(np.abs(torch_result - cython_result))
+        assert max_diff < TOLERANCE, f"threads={threads}: Max diff {max_diff:.6e}"
+    volresample.set_num_threads(4)  # restore
+
+
+# ============================================================================
 # Torch vs Cython Comparison Tests (exact match verification)
 # ============================================================================
 

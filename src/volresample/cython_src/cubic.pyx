@@ -192,13 +192,20 @@ cdef inline void _prefilter_1d_core_gained(double* data, int size,
 # Build reflected index LUT for one axis
 # ---------------------------------------------------------------------------
 cdef void _build_index_lut(int* idx_lut, float* weights, int out_size,
-                           int in_size, float scale) noexcept nogil:
+                           int in_size, float scale,
+                           bint align_corners) noexcept nogil:
     cdef int i, tap, base_idx
     cdef double src, src_floor, t
     cdef float wt[4]
 
     for i in range(out_size):
-        src = (<double>i + 0.5) * <double>scale - 0.5
+        if align_corners:
+            if out_size > 1:
+                src = <double>i * <double>(in_size - 1) / <double>(out_size - 1)
+            else:
+                src = 0.0
+        else:
+            src = (<double>i + 0.5) * <double>scale - 0.5
         src_floor = floor(src)
         base_idx = <int>src_floor
         t = src - src_floor
@@ -220,7 +227,8 @@ cdef void _resample_cubic(
     int in_d, int in_h, int in_w,
     int out_d, int out_h, int out_w,
     float scale_d, float scale_h, float scale_w,
-    int num_threads
+    int num_threads,
+    bint align_corners
 ) noexcept nogil:
     cdef int total_in = in_d * in_h * in_w
     cdef int in_hw = in_h * in_w
@@ -256,9 +264,9 @@ cdef void _resample_cubic(
     cdef int* w_idx = <int*>malloc(out_w * 4 * sizeof(int))
     cdef float* w_w  = <float*>malloc(out_w * 4 * sizeof(float))
 
-    _build_index_lut(d_idx, d_w, out_d, in_d, scale_d)
-    _build_index_lut(h_idx, h_w, out_h, in_h, scale_h)
-    _build_index_lut(w_idx, w_w, out_w, in_w, scale_w)
+    _build_index_lut(d_idx, d_w, out_d, in_d, scale_d, align_corners)
+    _build_index_lut(h_idx, h_w, out_h, in_h, scale_h, align_corners)
+    _build_index_lut(w_idx, w_w, out_w, in_w, scale_w, align_corners)
 
     # --- Stage 4: Pre-compute row offsets ---
     cdef int* h_row_off = <int*>malloc(out_h * 4 * sizeof(int))

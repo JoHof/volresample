@@ -25,6 +25,7 @@ class TorchReference:
         data: Any,  # torch.Tensor or np.ndarray
         size: tuple[int, int, int],
         mode: str = "linear",
+        align_corners: bool = False,
     ) -> Any:
         """Resample a 3D volume to a new size using interpolation.
 
@@ -101,7 +102,12 @@ class TorchReference:
             data_t = data_t.to(dtype=torch.float32)
 
         # Interpolate. Only pass align_corners for linear/trilinear modes.
-        resampled_t = F.interpolate(data_t, size=size, mode=torch_mode)
+        if torch_mode == "trilinear":
+            resampled_t = F.interpolate(
+                data_t, size=size, mode=torch_mode, align_corners=align_corners
+            )
+        else:
+            resampled_t = F.interpolate(data_t, size=size, mode=torch_mode)
 
         # Remove added dimensions based on original shape
         if orig_ndim == 3:

@@ -105,7 +105,8 @@ cdef object _resample_nearest_dispatch(
 def resample(
     data,
     tuple size,
-    str mode="linear"
+    str mode="linear",
+    bint align_corners=False
 ):
     """Resample 3D, 4D or 5D volume using specified interpolation mode.
     
@@ -114,6 +115,9 @@ def resample(
               Supports uint8, int16, float32.
         size: Output size (D, H, W).
         mode: Interpolation mode - 'nearest', 'linear', 'area', 'cubic'.
+        align_corners: If True, corner voxels of input and output are aligned,
+              preserving values at the corners. Only supported for 'linear' and
+              'cubic' modes. Default False.
         
     Returns:
         Resampled array with same number of dimensions as input.
@@ -139,6 +143,12 @@ def resample(
     cdef int b, c
     cdef list batch_outputs, channel_outputs
     
+    # Validate align_corners
+    if align_corners and mode not in ("linear", "cubic"):
+        raise ValueError(
+            f"align_corners=True is only supported for 'linear' and 'cubic' modes, got '{mode}'"
+        )
+    
     # Apply global thread settings
     _apply_thread_settings()
     
@@ -158,7 +168,7 @@ def resample(
         for b in range(n_batch):
             channel_outputs = []
             for c in range(n_channels):
-                channel_output = _resample_channel(data_np[b, c], size, mode)
+                channel_output = _resample_channel(data_np[b, c], size, mode, align_corners)
                 channel_outputs.append(channel_output)
             batch_outputs.append(np.stack(channel_outputs, axis=0))
         
@@ -170,18 +180,19 @@ def resample(
         channel_outputs = []
         
         for c in range(n_channels):
-            channel_output = _resample_channel(data_np[c], size, mode)
+            channel_output = _resample_channel(data_np[c], size, mode, align_corners)
             channel_outputs.append(channel_output)
         
         return np.stack(channel_outputs, axis=0)
     
     # 3D case
-    return _resample_channel(data_np, size, mode)
+    return _resample_channel(data_np, size, mode, align_corners)
 
 cdef object _resample_channel(
     cnp.ndarray data,
     tuple size,
-    str mode
+    str mode,
+    bint align_corners
 ):
     """Resample a single 3D volume."""
     cdef int in_d = data.shape[0]
@@ -214,7 +225,7 @@ cdef object _resample_channel(
         
         # Release GIL for parallel execution
         with nogil:
-            _resample_linear(data_ptr, output_ptr, in_d, in_h, in_w, out_d, out_h, out_w, scale_d, scale_h, scale_w)
+            _resample_linear(data_ptr, output_ptr, in_d, in_h, in_w, out_d, out_h, out_w, scale_d, scale_h, scale_w, align_corners)
         return output
     
     elif mode == "area":
@@ -246,7 +257,7 @@ cdef object _resample_channel(
         
         # Release GIL for parallel execution
         with nogil:
-            _resample_cubic(data_ptr, output_ptr, in_d, in_h, in_w, out_d, out_h, out_w, scale_d, scale_h, scale_w, cubic_nt)
+            _resample_cubic(data_ptr, output_ptr, in_d, in_h, in_w, out_d, out_h, out_w, scale_d, scale_h, scale_w, cubic_nt, align_corners)
         return output
     
     else:
