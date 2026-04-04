@@ -199,6 +199,7 @@ cdef object _resample_channel(
     cdef cnp.ndarray[cnp.float32_t, ndim=3] output
     cdef float* data_ptr
     cdef float* output_ptr
+    cdef int cubic_nt
     
     # Mode dispatch
     if mode == "nearest":
@@ -241,10 +242,11 @@ cdef object _resample_channel(
         output = np.empty((out_d, out_h, out_w), dtype=np.float32)
         data_ptr = <float*>cnp.PyArray_DATA(data_f32)
         output_ptr = <float*>cnp.PyArray_DATA(output)
+        cubic_nt = <int>get_num_threads()
         
         # Release GIL for parallel execution
         with nogil:
-            _resample_cubic(data_ptr, output_ptr, in_d, in_h, in_w, out_d, out_h, out_w, scale_d, scale_h, scale_w)
+            _resample_cubic(data_ptr, output_ptr, in_d, in_h, in_w, out_d, out_h, out_w, scale_d, scale_h, scale_w, cubic_nt)
         return output
     
     else:

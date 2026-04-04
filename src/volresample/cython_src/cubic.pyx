@@ -84,7 +84,8 @@ cdef inline void _prefilter_1d_inplace(double* data, int size,
         data[i] = z * (data[i + 1] - data[i])
 
 
-cdef void _prefilter_3d(double* data, int d, int h, int w) noexcept nogil:
+cdef void _prefilter_3d(double* data, int d, int h, int w,
+                       int nt) noexcept nogil:
     """Separable cubic B-spline prefilter along all 3 axes.
 
     - Axis 2 (width,  stride=1):   in-place
@@ -93,7 +94,6 @@ cdef void _prefilter_3d(double* data, int d, int h, int w) noexcept nogil:
     """
     cdef int i, j, k, hw = h * w
     cdef int max_line = d if d > h else h
-    cdef int nt = omp_get_max_threads()
     cdef double* temps = <double*>malloc(nt * max_line * sizeof(double))
     if temps == NULL:
         return
@@ -118,12 +118,12 @@ cdef void _prefilter_3d(double* data, int d, int h, int w) noexcept nogil:
     z_n_d = zz
 
     # --- Axis 2 (width): stride=1, in-place ---
-    for i in prange(d * h, schedule='static'):
+    for i in prange(d * h, schedule='static', num_threads=nt):
         _prefilter_1d_inplace(&data[i * w], w, z_n_w)
 
     # --- Axis 1 (height): stride=w, per-thread temp ---
     # Process per depth slice to keep working set in L2
-    for i in prange(d, schedule='static'):
+    for i in prange(d, schedule='static', num_threads=nt):
         tid = omp_get_thread_num()
         temp = &temps[tid * max_line]
         for j in range(w):
@@ -137,7 +137,7 @@ cdef void _prefilter_3d(double* data, int d, int h, int w) noexcept nogil:
                 data[i * hw + j + k * w] = temp[k]
 
     # --- Axis 0 (depth): stride=h*w, per-thread temp + prefetch ---
-    for i in prange(hw, schedule='static'):
+    for i in prange(hw, schedule='static', num_threads=nt):
         tid = omp_get_thread_num()
         temp = &temps[tid * max_line]
         # Copy strided -> contiguous with gain fused + prefetch
@@ -219,7 +219,8 @@ cdef void _resample_cubic(
     float* output_ptr,
     int in_d, int in_h, int in_w,
     int out_d, int out_h, int out_w,
-    float scale_d, float scale_h, float scale_w
+    float scale_d, float scale_h, float scale_w,
+    int num_threads
 ) noexcept nogil:
     cdef int total_in = in_d * in_h * in_w
     cdef int in_hw = in_h * in_w
@@ -231,10 +232,10 @@ cdef void _resample_cubic(
         return
 
     cdef int i
-    for i in prange(total_in, schedule='static'):
+    for i in prange(total_in, schedule='static', num_threads=num_threads):
         coeffs_d[i] = <double>data_ptr[i]
 
-    _prefilter_3d(coeffs_d, in_d, in_h, in_w)
+    _prefilter_3d(coeffs_d, in_d, in_h, in_w, num_threads)
 
     # --- Stage 2: Convert to float32 for evaluation ---
     cdef float* coeffs = <float*>malloc(total_in * sizeof(float))
@@ -242,7 +243,7 @@ cdef void _resample_cubic(
         free(coeffs_d)
         return
 
-    for i in prange(total_in, schedule='static'):
+    for i in prange(total_in, schedule='static', num_threads=num_threads):
         coeffs[i] = <float>coeffs_d[i]
 
     free(coeffs_d)
@@ -274,7 +275,7 @@ cdef void _resample_cubic(
     cdef float val
     cdef int od4, oh4, ow4
 
-    for od in prange(out_d, schedule='static'):
+    for od in prange(out_d, schedule='static', num_threads=num_threads):
         od4 = od * 4
         for oh in range(out_h):
             oh4 = oh * 4
