@@ -121,7 +121,7 @@ jobs:
       - name: Run tests
         run: |
           pip install pytest numpy
-          pytest tests/ -v --ignore=tests/torch_reference.py --ignore=tests/benchmark_resampling.py
+          pytest tests/ -v --ignore=tests/torch_reference.py
 
   # ---------------------------------------------------------------------------
   # Publish to PyPI on tagged releases (v*)

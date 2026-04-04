@@ -1,5 +1,7 @@
 # Cubic B-spline resampling — high-performance implementation
-# Matches scipy.ndimage.zoom(order=3, mode='reflect', grid_mode=True)
+# Matches scipy.ndimage.zoom(order=3, mode='reflect'):
+# - grid_mode=True when align_corners=False
+# - grid_mode=False when align_corners=True
 
 from libc.string cimport memcpy
 

@@ -45,6 +45,8 @@ class TorchReference:
                   Note: 'nearest' uses 'nearest-exact' under the hood.
                   For 'nearest' with uint8: stays uint8
                   For 'linear'/'area' with uint8: converts to float32
+            align_corners: Passed through to PyTorch only for trilinear mode.
+                Ignored for nearest and area, matching PyTorch's API.
 
         Returns:
             Resampled array/tensor. Shape is (new_D, new_H, new_W) for 3D inputs,

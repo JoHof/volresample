@@ -65,7 +65,7 @@ environment = {  PIP_VERBOSE = "1", PIP_PROGRESS_BAR = "off", PIP_DISABLE_PIP_VE
 
 # Test the built wheels
 test-requires = ["pytest", "numpy"]
-test-command = "pytest {project}/tests -v --ignore={project}/tests/torch_reference.py --ignore={project}/tests/benchmark_resampling.py"
+test-command = "pytest {project}/tests -v --ignore={project}/tests/torch_reference.py"
 test-skip = ["*-manylinux_aarch64"]  # Skip tests on QEMU-emulated platforms only
 
 # Platform-specific settings

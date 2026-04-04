@@ -108,28 +108,34 @@ def resample(
     str mode="linear",
     bint align_corners=False
 ):
-    """Resample 3D, 4D or 5D volume using specified interpolation mode.
-    
+    """Resample 3D, 4D or 5D volume using the specified interpolation mode.
+
     Args:
-        data: Input array, shape (D, H, W), (C, D, H, W), or (N, C, D, H, W). 
-              Supports uint8, int16, float32.
+        data: Input array, shape (D, H, W), (C, D, H, W), or (N, C, D, H, W).
+            Supports uint8, int16, float32.
         size: Output size (D, H, W).
-        mode: Interpolation mode - 'nearest', 'linear', 'area', 'cubic'.
+        mode: Interpolation mode - 'nearest', 'linear', 'area', or 'cubic'.
         align_corners: If True, corner voxels of input and output are aligned,
-              preserving values at the corners. Only supported for 'linear' and
-              'cubic' modes. Default False.
-        
+            preserving values at the corners. Only supported for 'linear' and
+            'cubic' modes.
+            - For 'linear': matches PyTorch trilinear interpolate with
+              align_corners=True.
+            - For 'cubic': matches scipy.ndimage.zoom(order=3, mode='reflect',
+              grid_mode=False).
+            - With align_corners=False, 'cubic' matches scipy.ndimage.zoom(
+              order=3, mode='reflect', grid_mode=True).
+
     Returns:
-        Resampled array with same number of dimensions as input.
-        
+        Resampled array with the same number of dimensions as the input.
+
     Note:
         Thread count is controlled globally via volresample.set_num_threads().
         Default is min(cpu_count, 4).
-        
+
     Examples:
         >>> import numpy as np
         >>> import volresample
-        >>> volresample.set_num_threads(4)  # Optional: set thread count
+        >>> volresample.set_num_threads(4)
         >>> data = np.random.rand(64, 64, 64).astype(np.float32)
         >>> resampled = volresample.resample(data, (32, 32, 32), mode='linear')
         >>> resampled.shape
@@ -242,7 +248,9 @@ cdef object _resample_channel(
         return output
     
     elif mode == "cubic":
-        # Cubic B-spline matching scipy.ndimage.zoom(order=3, mode='reflect', grid_mode=True)
+        # Cubic B-spline matching scipy.ndimage.zoom(order=3, mode='reflect'):
+        # - grid_mode=True when align_corners=False
+        # - grid_mode=False when align_corners=True
         data_f32 = np.ascontiguousarray(data, dtype=np.float32)
         
         # Identity fast-path: when output size == input size, just copy
