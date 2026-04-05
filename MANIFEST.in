@@ -1,7 +1,6 @@
 # Include Cython source files
 recursive-include src *.pyx
 recursive-include src *.pxd
-recursive-include src *.c
 
 # Include package data
 include src/volresample/*.pyi
