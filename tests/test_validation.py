@@ -45,9 +45,11 @@ def test_resample_invalid_size_tuple_does_not_crash():
         "raise SystemExit(1)\n"
     )
     env = os.environ.copy()
-    env["PYTHONPATH"] = os.pathsep.join(
-        [str(ROOT / "src"), str(ROOT / "tests"), env.get("PYTHONPATH", "")]
-    )
+    package_root = os.path.dirname(os.path.dirname(os.path.abspath(volresample.__file__)))
+    pythonpath_entries = [package_root]
+    if env.get("PYTHONPATH"):
+        pythonpath_entries.append(env["PYTHONPATH"])
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
     proc = subprocess.run(
         [sys.executable, "-c", code],
         cwd=ROOT,
