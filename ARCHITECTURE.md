@@ -143,7 +143,7 @@ This keeps the core resampling functions simple (3D only) while supporting multi
 
 ### 6. PyTorch Compatibility
 
-The coordinate system matches PyTorch's `align_corners=False` (the default):
+By default, the coordinate system matches PyTorch's `align_corners=False` behavior:
 
 ```cython
 # Source coordinate for output index i
@@ -156,6 +156,8 @@ For `grid_sample`, normalized coordinates in `[-1, 1]` map to pixel coordinates:
 # align_corners=False formula
 pixel = ((coord + 1) / 2) * size - 0.5
 ```
+
+For `resample()`, `align_corners=True` is also supported for `linear` and `cubic` modes and is validated against PyTorch/SciPy in the test suite. `nearest` and `area` reject `align_corners=True`, matching the intended API surface.
 
 ### 7. Cubic B-spline Interpolation
 
@@ -207,7 +209,7 @@ for od in prange(out_d):      # Parallel
 
 ## grid_sample Implementation
 
-`grid_sample` supports 3D (5D tensor: N, C, D, H, W) and 2D (4D tensor: N, C, H, W).
+`grid_sample` currently supports only 3D volumes via 5D tensors `(N, C, D, H, W)` and sampling grids of shape `(N, D_out, H_out, W_out, 3)`.
 
 ### Coordinate Order
 
@@ -262,10 +264,18 @@ Performance-oriented directives disable runtime checks:
 
 ## Testing
 
-Tests compare against PyTorch (nearest, linear, area) and SciPy (cubic) to verify numerical correctness:
+The test suite is organized by feature area rather than a single monolithic file:
+
+- `tests/test_resample.py` covers nearest, linear, and area modes, including torch comparisons, edge cases, memory layout, and `align_corners` behavior for linear mode.
+- `tests/test_cubic.py` covers cubic B-spline resampling, including SciPy comparisons, `align_corners`, singleton-axis edge cases, and thread determinism.
+- `tests/test_grid_sample.py` covers 3D `grid_sample` against PyTorch across interpolation and padding modes.
+- `tests/test_dtypes.py` covers dtype preservation/conversion behavior.
+- `tests/test_validation.py` covers input validation and error handling.
+
+Tests compare against PyTorch (nearest, linear, area, grid_sample) and SciPy (cubic) to verify numerical correctness:
 
 ```python
-# tests/test_resampling.py, tests/test_grid_sample.py
+# tests/test_resample.py, tests/test_grid_sample.py
 torch_output = F.interpolate(input, size, mode='trilinear')
 cython_output = volresample.resample(input, size, mode='linear')
 assert np.allclose(torch_output, cython_output, atol=1e-5)
