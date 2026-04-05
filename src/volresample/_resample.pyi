@@ -8,7 +8,8 @@ from numpy.typing import NDArray
 def resample(
     data: NDArray[np.float32] | NDArray[np.uint8] | NDArray[np.int16],
     size: tuple[int, int, int],
-    mode: Literal["nearest", "linear", "area"] = "linear",
+    mode: Literal["nearest", "linear", "area", "cubic"] = "linear",
+    align_corners: bool = False,
 ) -> NDArray[np.float32] | NDArray[np.uint8] | NDArray[np.int16]:
     """Resample a 3D, 4D, or 5D volume to a new size.
 
@@ -22,36 +23,25 @@ def resample(
             - 'linear': Trilinear interpolation (float32 only).
               Corresponds to PyTorch's 'trilinear'.
             - 'area': Area-based averaging (float32 only, suited for downsampling).
+            - 'cubic': Cubic B-spline interpolation (float32 only).
+              Matches scipy.ndimage.zoom(order=3, mode='reflect').
+        align_corners: If True, corner voxels of input and output are aligned,
+            preserving values at the corners. Only supported for 'linear' and
+            'cubic' modes.
+            - For 'linear': matches PyTorch trilinear with align_corners=True.
+            - For 'cubic': matches scipy.ndimage.zoom(order=3, mode='reflect',
+              grid_mode=False).
+            - For 'cubic' with align_corners=False: matches scipy.ndimage.zoom(
+              order=3, mode='reflect', grid_mode=True).
 
     Returns:
-        Resampled array with same number of dimensions as input.
-        - For nearest mode: preserves input dtype
-        - For linear/area mode: float32 output
+        Resampled array with the same number of dimensions as the input.
+        - For nearest mode: preserves input dtype.
+        - For linear, area, and cubic modes: returns float32.
 
     Note:
         Thread count is controlled globally via volresample.set_num_threads().
         Default is min(cpu_count, 4).
-
-    Examples:
-        >>> import numpy as np
-        >>> import volresample
-        >>> volresample.set_num_threads(4)  # Optional: configure threads
-        >>> data = np.random.rand(64, 64, 64).astype(np.float32)
-        >>> resampled = volresample.resample(data, (32, 32, 32), mode='linear')
-        >>> resampled.shape
-        (32, 32, 32)
-
-        Multi-channel:
-        >>> data_4d = np.random.rand(4, 64, 64, 64).astype(np.float32)
-        >>> resampled_4d = volresample.resample(data_4d, (32, 32, 32))
-        >>> resampled_4d.shape
-        (4, 32, 32, 32)
-
-        Batched multi-channel:
-        >>> data_5d = np.random.rand(2, 4, 64, 64, 64).astype(np.float32)
-        >>> resampled_5d = volresample.resample(data_5d, (32, 32, 32))
-        >>> resampled_5d.shape
-        (2, 4, 32, 32, 32)
     """
     ...
 

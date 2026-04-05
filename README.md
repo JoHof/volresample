@@ -5,16 +5,17 @@
 
 Fast 3D volume resampling with Cython and OpenMP parallelization.
 
-Implemented against PyTorch's `F.interpolate` and `F.grid_sample` as a reference, producing identical results. Can be used as a drop-in replacement when PyTorch is not available or when better performance is desired on CPU.
+Implemented against PyTorch's `F.interpolate` and `F.grid_sample` as a reference, producing identical results for nearest, linear, and area modes. The cubic mode matches `scipy.ndimage.zoom(order=3, mode='reflect')`, using `grid_mode=True` when `align_corners=False` and `grid_mode=False` when `align_corners=True`. Can be used as a drop-in replacement when PyTorch or SciPy is not available or when better performance is desired on CPU.
 
 [Blogpost](https://johof.github.io/2026/02/volresample-3d-volume-resampling/)
 ## Features
 
 - Cython-optimized with OpenMP parallelization
 - Simple API: `resample()` and `grid_sample()`
-- Interpolation modes: nearest, linear and area
-- Supports 3D and 4D (multi-channel) volumes
-- Supports uint8, int16 (nearest) and float32 dtypes (all)
+- Interpolation modes: nearest, linear, area, and cubic
+- Supports 3D, 4D (multi-channel), and 5D (batched multi-channel) volumes
+- Supports `align_corners=True` for linear and cubic resampling
+- Supports uint8, int16 (nearest) and float32 dtypes (all other modes)
 
 ## Installation
 
@@ -44,6 +45,22 @@ volume = np.random.rand(128, 128, 128).astype(np.float32)
 # Resample to a different size
 resampled = volresample.resample(volume, (64, 64, 64), mode='linear')
 print(resampled.shape)  # (64, 64, 64)
+```
+
+### Cubic Resampling (scipy-compatible)
+
+```python
+# Cubic B-spline resampling.
+# align_corners=False -> scipy zoom(..., grid_mode=True)
+# align_corners=True  -> scipy zoom(..., grid_mode=False)
+resampled = volresample.resample(volume, (64, 64, 64), mode='cubic')
+```
+
+### Align Corners
+
+```python
+# For linear and cubic modes, align_corners=True preserves the corner voxels.
+aligned = volresample.resample(volume, (192, 192, 192), mode='linear', align_corners=True)
 ```
 
 ### Multi-Channel Volumes
@@ -99,7 +116,7 @@ resampled = volresample.resample(volume, (64, 64, 64), mode='linear')
 
 ## API Reference
 
-### `resample(data, size, mode='linear')`
+### `resample(data, size, mode='linear', align_corners=False)`
 
 Resample a 3D, 4D, or 5D volume to a new size.
 
@@ -110,23 +127,36 @@ Resample a 3D, 4D, or 5D volume to a new size.
   - `'nearest'`: Nearest neighbor (works with all dtypes)
   - `'linear'`: Trilinear interpolation (float32 only)
   - `'area'`: Area-based averaging (float32 only, suited for downsampling)
+  - `'cubic'`: Tricubic B-spline interpolation with IIR prefilter (float32 only). Matches `scipy.ndimage.zoom(order=3, mode='reflect')`
+- `align_corners` (bool): Only supported for `mode='linear'` and `mode='cubic'`
+  - `False` (default): matches PyTorch `align_corners=False` for linear, and SciPy `grid_mode=True` for cubic
+  - `True`: matches PyTorch `align_corners=True` for linear, and SciPy `grid_mode=False` for cubic
+  - Passing `align_corners=True` with `nearest` or `area` raises `ValueError`
 
 **PyTorch correspondence:**
 
 | volresample | PyTorch `F.interpolate` |
 |-------------|-------------------------|
 | `mode='nearest'` | `mode='nearest-exact'` |
-| `mode='linear'` | `mode='trilinear'` |
+| `mode='linear', align_corners=False` | `mode='trilinear', align_corners=False` |
+| `mode='linear', align_corners=True` | `mode='trilinear', align_corners=True` |
 | `mode='area'` | `mode='area'` |
 
-volresample does not expose an `align_corners` parameter. The behavior matches PyTorch's `align_corners=False` (the default).
+`align_corners` is intentionally limited to the modes where the reference APIs support it: linear and cubic.
+
+**SciPy correspondence:**
+
+| volresample | SciPy |
+|-------------|-------|
+| `mode='cubic', align_corners=False` | `scipy.ndimage.zoom(order=3, mode='reflect', grid_mode=True)` |
+| `mode='cubic', align_corners=True` | `scipy.ndimage.zoom(order=3, mode='reflect', grid_mode=False)` |
 
 **Returns:**
 - Resampled array with same number of dimensions as input
 
 **Supported Dtypes:**
 - `uint8`, `int16`: Only with `mode='nearest'`
-- `float32`: All modes
+- `float32`: All modes (`nearest`, `linear`, `area`, `cubic`)
 
 ### `grid_sample(input, grid, mode='linear', padding_mode='zeros')`
 
@@ -167,37 +197,51 @@ Get the current number of threads used for parallel operations.
 
 ## Performance
 
-Benchmarks on an Intel i7-8565U against PyTorch 2.8.0. Times are means over 10 iterations.
+Benchmarks below were produced by the default curated benchmark profile on an Intel i7-8565U using 4 CPU threads:
 
-**`resample()`** — single large 3D volume:
+```bash
+python tests/benchmark.py --threads 4
+```
 
-| Operation   | Mode            | **Single-thread** |         |           | **Four-threads** |         |          |
-| ----------- | --------------- | ----------------- | ------- | :-------: | ---------------- | ------- | :------: |
-|             |                 | volresample       | PyTorch |  Speedup  | volresample      | PyTorch |  Speedup |
-| 512³ → 256³ | nearest         | 23.6 ms           | 38.0 ms |    1.6×   | 12.6 ms          | 16.7 ms |   1.3×   |
-| 512³ → 256³ | linear          | 99.9 ms           | 182 ms  |    1.8×   | 34.3 ms          | 54.6 ms |   1.6×   |
-| 512³ → 256³ | area            | 230 ms            | 611 ms  |    2.7×   | 64.5 ms          | 613 ms  | **9.5×** |
-| 512³ → 256³ | nearest (uint8) | 13.7 ms           | 33.8 ms |    2.5×   | 4.3 ms           | 10.4 ms |   2.4×   |
-| 512³ → 256³ | nearest (int16) | 16.5 ms           | 217 ms  | **13.2×** | 8.4 ms           | 93.2 ms |   11.2×  |
+The default profile runs for about 30-60 seconds using adaptive repeat counts.
 
+**volresample vs PyTorch**
 
-**`grid_sample()`** — single large 3D volume (128³ input):
+| Case | Shape | PyTorch | volresample | Speedup | Max error |
+|------|-------|-----------|-------------|---------|-----------|
+| nearest | `128x128x128 -> 64x64x64` | 0.98 ms | 0.41 ms | 2.36× | 0 |
+| nearest (`uint8`) | `128x128x128 -> 64x64x64` | 0.83 ms | 0.27 ms | 3.07× | 0 |
+| nearest (`int16`) | `128x128x128 -> 64x64x64` | 4.20 ms | 0.40 ms | 10.54× | 0 |
+| linear | `128x128x128 -> 64x64x64` | 3.45 ms | 2.33 ms | 1.48× | 0 |
+| linear, `align_corners=True` | `96x96x96 -> 144x144x144` | 23.75 ms | 10.46 ms | 2.27× | `4.50e-05` |
+| area | `160x160x160 -> 80x80x80` | 40.12 ms | 7.20 ms | 5.57× | 0 |
+| 4D linear | `4x96x96x96 -> 64x64x64` | 12.01 ms | 7.50 ms | 1.60× | 0 |
+| 5D linear | `2x4x80x80x80 -> 48x48x48` | 9.76 ms | 8.49 ms | 1.15× | 0 |
 
-| Mode   | Padding    | **Single-thread** |         |         | **Four-threads** |         |         |
-| ------ | ---------- | ----------------- | ------- | :-----: | ---------------- | ------- | :-----: |
-|        |            | volresample       | PyTorch | Speedup | volresample      | PyTorch | Speedup |
-| linear | zeros      | 118 ms            | 181 ms  |   1.5×  | 38.1 ms          | 169 ms  |   4.4×  |
-| linear | reflection | 103 ms            | 211 ms  |   2.1×  | 33.2 ms          | 194 ms  |   5.9×  |
+**volresample vs SciPy**
 
+| Case | Shape | SciPy | volresample | Speedup | Max error |
+|------|-------|-------|-------------|---------|-----------|
+| cubic, `align_corners=False` | `128x128x128 -> 64x64x64` | 266.29 ms | 63.68 ms | 4.18× | `8.34e-07` |
+| cubic, `align_corners=True` | `96x128x80 -> 64x160x48` | 403.68 ms | 46.23 ms | 8.73× | `1.43e-06` |
 
-Average speedup across all benchmarks: **3.1× at 1 thread**, **6.0× at 4 threads**.
+**volresample vs PyTorch (`grid_sample`)**
+
+| Case | Shape | PyTorch | volresample | Speedup | Max error |
+|------|-------|-----------|-------------|---------|-----------|
+| linear, zeros | `1x2x96x96x96 -> 80x80x80` | 129.57 ms | 41.63 ms | 3.11× | `4.40e-05` |
+| nearest, zeros | `1x2x96x96x96 -> 80x80x80` | 14.23 ms | 4.47 ms | 3.18× | 0 |
+| linear, reflection | `1x2x80x96x64 -> 72x88x56` | 91.12 ms | 19.75 ms | 4.61× | `5.42e-05` |
+
+Average speedup across the default benchmark suite: **3.99×**.
 
 **Notes:**
 
-- **Area mode**: At 1 thread the speedup is 2.7×; at 4 threads it reaches 9.5×. PyTorch's area interpolation does not appear to parallelize over spatial dimensions for single-image workloads — its runtime is essentially unchanged between 1 and 4 threads (611 ms vs. 613 ms). volresample parallelizes along the first spatial dimension, reducing runtime from 230 ms to 65 ms with 4 threads.
-- **int16**: PyTorch does not support int16 interpolation natively and requires casting to float32, processing, then casting back. volresample operates directly on int16, eliminating two full-volume type conversions. The advantage is large even at 1 thread (13.2×) and persists at 4 threads because the conversion overhead scales with data volume, not thread count.
-- **Thread scaling**: For large volumes, volresample typically halves wall time going from 1 to 4 threads on nearest and linear modes. Grid sample scales more strongly (1.5× → 4.4× for linear) because per-voxel work is higher. PyTorch scaling is more variable, and negligible for area mode.
-- **These are estimates** on a single machine under light load. Actual results will vary with CPU architecture, memory bandwidth, and system conditions.
+- **Cubic mode** is validated against SciPy rather than PyTorch. The `align_corners` flag selects between SciPy's `grid_mode=True` and `grid_mode=False`, and both paths are benchmarked above.
+- **`int16` nearest** shows the largest speedup because PyTorch must round-trip through `float32`, while volresample operates directly on `int16`.
+- **Area mode** remains one of the strongest CPU wins because the implementation parallelizes efficiently over spatial work.
+- **4D and 5D coverage** is included in the benchmark suite so multi-channel and batched paths are represented, even when the raw speedups are smaller than the single-volume cases.
+- **These are machine-specific measurements.** CPU architecture, memory bandwidth, thermal throttling, and installed library versions can shift the absolute numbers substantially.
 
 ## Development
 
@@ -219,11 +263,17 @@ pytest tests/ --skip-torch
 ### Running Benchmarks
 
 ```bash
-# Use default threads (min of cpu_count and 4)
-python tests/benchmark_resampling.py --iterations 10
+# Curated default run: all modes plus grid_sample, roughly 30-60 seconds
+python tests/benchmark.py
 
-# Or specify thread count
-python tests/benchmark_resampling.py --threads 4 --iterations 10
+# Faster smoke benchmark
+python tests/benchmark.py --profile quick
+
+# Or pin the thread count
+python tests/benchmark.py --threads 4
+
+# Output is printed live while the benchmark runs
+python -u tests/benchmark.py
 ```
 
 ### Building from Source

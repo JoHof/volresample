@@ -7,7 +7,7 @@ optimized Cython implementations with OpenMP parallelization.
 
 Main Functions
 --------------
-resample : Resample 3D or 4D volumes using various interpolation modes
+resample : Resample 3D, 4D, or 5D volumes using various interpolation modes
 grid_sample : Sample volumes using arbitrary sampling grids
 
 Thread Configuration
@@ -25,6 +25,14 @@ Basic resampling:
 >>> resampled = volresample.resample(data, (32, 32, 32), mode='linear')
 >>> resampled.shape
 (32, 32, 32)
+
+Align corners:
+
+>>> aligned = volresample.resample(data, (96, 96, 96), mode='linear', align_corners=True)
+
+Cubic resampling:
+
+>>> cubic = volresample.resample(data, (48, 48, 48), mode='cubic')
 
 Multi-channel resampling:
 
@@ -55,10 +63,9 @@ Thread configuration:
 4
 """
 
-__version__ = "0.1.0"
-
 # Import thread configuration (always available, pure Python)
 from volresample._config import get_num_threads, set_num_threads
+from volresample._version import __version__
 
 try:
     from volresample._resample import grid_sample, resample

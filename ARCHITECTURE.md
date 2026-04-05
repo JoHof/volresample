@@ -22,6 +22,7 @@ src/volresample/
     ├── nearest.pyx      # Nearest neighbor interpolation
     ├── linear.pyx       # Trilinear interpolation
     ├── area.pyx         # Area-based resampling
+    ├── cubic.pyx        # Cubic B-spline interpolation with IIR prefilter
     └── grid_sample.pyx  # Grid sampling implementation
 ```
 
@@ -34,6 +35,7 @@ include "cython_src/utils.pyx"
 include "cython_src/nearest.pyx"
 include "cython_src/linear.pyx"
 include "cython_src/area.pyx"
+include "cython_src/cubic.pyx"
 include "cython_src/grid_sample.pyx"
 ```
 
@@ -78,7 +80,7 @@ cdef void _resample_nearest(numeric_type* data_ptr, ...) noexcept nogil:
     # Single implementation, compiled for each type
 ```
 
-Linear and area modes only support `float32` (interpolation requires floating point).
+Linear, area, and cubic modes only support `float32` (interpolation requires floating point).
 
 ### 2. Pre-computed Index Tables
 
@@ -141,7 +143,7 @@ This keeps the core resampling functions simple (3D only) while supporting multi
 
 ### 6. PyTorch Compatibility
 
-The coordinate system matches PyTorch's `align_corners=False` (the default):
+By default, the coordinate system matches PyTorch's `align_corners=False` behavior:
 
 ```cython
 # Source coordinate for output index i
@@ -154,6 +156,18 @@ For `grid_sample`, normalized coordinates in `[-1, 1]` map to pixel coordinates:
 # align_corners=False formula
 pixel = ((coord + 1) / 2) * size - 0.5
 ```
+
+For `resample()`, `align_corners=True` is also supported for `linear` and `cubic` modes and is validated against PyTorch/SciPy in the test suite. `nearest` and `area` reject `align_corners=True`, matching the intended API surface.
+
+### 7. Cubic B-spline Interpolation
+
+The cubic mode implements tricubic B-spline interpolation matching `scipy.ndimage.zoom(order=3, mode='reflect', grid_mode=True)`. Unlike the other modes which directly compute output values, cubic interpolation is a two-stage process:
+
+1. **IIR prefilter**: A separable in-place infinite impulse response filter along each axis converts sample values into B-spline coefficients. This uses causal and anticausal passes with pole `z = sqrt(3) - 2` and reflect (half-sample symmetric) boundary conditions. The initialization formulas match scipy's `_init_causal_reflect` and `_init_anticausal_reflect` from `ni_splines.c`.
+
+2. **Evaluation**: For each output voxel, compute source coordinates, determine the 4×4×4 neighborhood of B-spline coefficients, apply the cubic B-spline basis weights, and accumulate the result.
+
+An identity fast-path skips both stages when the input and output sizes match, returning a copy of the input directly.
 
 ## Parallelization Strategy
 
@@ -195,7 +209,7 @@ for od in prange(out_d):      # Parallel
 
 ## grid_sample Implementation
 
-`grid_sample` supports 3D (5D tensor: N, C, D, H, W) and 2D (4D tensor: N, C, H, W).
+`grid_sample` currently supports only 3D volumes via 5D tensors `(N, C, D, H, W)` and sampling grids of shape `(N, D_out, H_out, W_out, 3)`.
 
 ### Coordinate Order
 
@@ -250,13 +264,26 @@ Performance-oriented directives disable runtime checks:
 
 ## Testing
 
-Tests compare against PyTorch to verify numerical correctness:
+The test suite is organized by feature area rather than a single monolithic file:
+
+- `tests/test_resample.py` covers nearest, linear, and area modes, including torch comparisons, edge cases, memory layout, and `align_corners` behavior for linear mode.
+- `tests/test_cubic.py` covers cubic B-spline resampling, including SciPy comparisons, `align_corners`, singleton-axis edge cases, and thread determinism.
+- `tests/test_grid_sample.py` covers 3D `grid_sample` against PyTorch across interpolation and padding modes.
+- `tests/test_dtypes.py` covers dtype preservation/conversion behavior.
+- `tests/test_validation.py` covers input validation and error handling.
+
+Tests compare against PyTorch (nearest, linear, area, grid_sample) and SciPy (cubic) to verify numerical correctness:
 
 ```python
-# tests/test_resampling.py, tests/test_grid_sample.py
+# tests/test_resample.py, tests/test_grid_sample.py
 torch_output = F.interpolate(input, size, mode='trilinear')
 cython_output = volresample.resample(input, size, mode='linear')
 assert np.allclose(torch_output, cython_output, atol=1e-5)
+
+# Cubic tests compare against scipy.ndimage.zoom
+scipy_output = scipy.ndimage.zoom(input, zoom, order=3, mode='reflect', grid_mode=True)
+cython_output = volresample.resample(input, size, mode='cubic')
+assert np.allclose(scipy_output, cython_output, atol=1e-6)
 ```
 
 The `TorchReference` class in `tests/torch_reference.py` provides a consistent interface for PyTorch operations with mode name mapping (e.g., `linear` → `trilinear`).

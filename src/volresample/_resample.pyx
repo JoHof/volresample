@@ -16,6 +16,8 @@ from volresample._config import get_num_threads
 
 cdef extern from "omp.h":
     int omp_set_num_threads(int)
+    int omp_get_thread_num() noexcept nogil
+    int omp_get_max_threads() noexcept nogil
 
 cnp.import_array()
 
@@ -24,6 +26,7 @@ include "cython_src/utils.pyx"
 include "cython_src/nearest.pyx"
 include "cython_src/linear.pyx"
 include "cython_src/area.pyx"
+include "cython_src/cubic.pyx"
 include "cython_src/grid_sample.pyx"
 
 
@@ -102,27 +105,37 @@ cdef object _resample_nearest_dispatch(
 def resample(
     data,
     tuple size,
-    str mode="linear"
+    str mode="linear",
+    bint align_corners=False
 ):
-    """Resample 3D, 4D or 5D volume using specified interpolation mode.
-    
+    """Resample 3D, 4D or 5D volume using the specified interpolation mode.
+
     Args:
-        data: Input array, shape (D, H, W), (C, D, H, W), or (N, C, D, H, W). 
-              Supports uint8, int16, float32.
+        data: Input array, shape (D, H, W), (C, D, H, W), or (N, C, D, H, W).
+            Supports uint8, int16, float32.
         size: Output size (D, H, W).
-        mode: Interpolation mode - 'nearest', 'linear', 'area'.
-        
+        mode: Interpolation mode - 'nearest', 'linear', 'area', or 'cubic'.
+        align_corners: If True, corner voxels of input and output are aligned,
+            preserving values at the corners. Only supported for 'linear' and
+            'cubic' modes.
+            - For 'linear': matches PyTorch trilinear interpolate with
+              align_corners=True.
+            - For 'cubic': matches scipy.ndimage.zoom(order=3, mode='reflect',
+              grid_mode=False).
+            - With align_corners=False, 'cubic' matches scipy.ndimage.zoom(
+              order=3, mode='reflect', grid_mode=True).
+
     Returns:
-        Resampled array with same number of dimensions as input.
-        
+        Resampled array with the same number of dimensions as the input.
+
     Note:
         Thread count is controlled globally via volresample.set_num_threads().
         Default is min(cpu_count, 4).
-        
+
     Examples:
         >>> import numpy as np
         >>> import volresample
-        >>> volresample.set_num_threads(4)  # Optional: set thread count
+        >>> volresample.set_num_threads(4)
         >>> data = np.random.rand(64, 64, 64).astype(np.float32)
         >>> resampled = volresample.resample(data, (32, 32, 32), mode='linear')
         >>> resampled.shape
@@ -135,6 +148,22 @@ def resample(
     cdef cnp.ndarray channel_output
     cdef int b, c
     cdef list batch_outputs, channel_outputs
+    
+    # Validate size tuple
+    if len(size) != 3:
+        raise ValueError(
+            f"size must be a 3-tuple (D, H, W), got {len(size)} elements"
+        )
+    if size[0] <= 0 or size[1] <= 0 or size[2] <= 0:
+        raise ValueError(
+            f"All output dimensions must be positive, got size={size}"
+        )
+
+    # Validate align_corners
+    if align_corners and mode not in ("linear", "cubic"):
+        raise ValueError(
+            f"align_corners=True is only supported for 'linear' and 'cubic' modes, got '{mode}'"
+        )
     
     # Apply global thread settings
     _apply_thread_settings()
@@ -155,7 +184,7 @@ def resample(
         for b in range(n_batch):
             channel_outputs = []
             for c in range(n_channels):
-                channel_output = _resample_channel(data_np[b, c], size, mode)
+                channel_output = _resample_channel(data_np[b, c], size, mode, align_corners)
                 channel_outputs.append(channel_output)
             batch_outputs.append(np.stack(channel_outputs, axis=0))
         
@@ -167,18 +196,19 @@ def resample(
         channel_outputs = []
         
         for c in range(n_channels):
-            channel_output = _resample_channel(data_np[c], size, mode)
+            channel_output = _resample_channel(data_np[c], size, mode, align_corners)
             channel_outputs.append(channel_output)
         
         return np.stack(channel_outputs, axis=0)
     
     # 3D case
-    return _resample_channel(data_np, size, mode)
+    return _resample_channel(data_np, size, mode, align_corners)
 
 cdef object _resample_channel(
     cnp.ndarray data,
     tuple size,
-    str mode
+    str mode,
+    bint align_corners
 ):
     """Resample a single 3D volume."""
     cdef int in_d = data.shape[0]
@@ -196,6 +226,7 @@ cdef object _resample_channel(
     cdef cnp.ndarray[cnp.float32_t, ndim=3] output
     cdef float* data_ptr
     cdef float* output_ptr
+    cdef int cubic_nt
     
     # Mode dispatch
     if mode == "nearest":
@@ -210,7 +241,7 @@ cdef object _resample_channel(
         
         # Release GIL for parallel execution
         with nogil:
-            _resample_linear(data_ptr, output_ptr, in_d, in_h, in_w, out_d, out_h, out_w, scale_d, scale_h, scale_w)
+            _resample_linear(data_ptr, output_ptr, in_d, in_h, in_w, out_d, out_h, out_w, scale_d, scale_h, scale_w, align_corners)
         return output
     
     elif mode == "area":
@@ -226,8 +257,29 @@ cdef object _resample_channel(
             _resample_area(data_ptr, output_ptr, in_d, in_h, in_w, out_d, out_h, out_w, scale_d, scale_h, scale_w)
         return output
     
+    elif mode == "cubic":
+        # Cubic B-spline matching scipy.ndimage.zoom(order=3, mode='reflect'):
+        # - grid_mode=True when align_corners=False
+        # - grid_mode=False when align_corners=True
+        data_f32 = np.ascontiguousarray(data, dtype=np.float32)
+        
+        # Identity fast-path: when output size == input size, just copy
+        # (matches scipy behavior: prefilter + eval at integer coords = identity)
+        if in_d == out_d and in_h == out_h and in_w == out_w:
+            return data_f32.copy()
+        
+        output = np.empty((out_d, out_h, out_w), dtype=np.float32)
+        data_ptr = <float*>cnp.PyArray_DATA(data_f32)
+        output_ptr = <float*>cnp.PyArray_DATA(output)
+        cubic_nt = <int>get_num_threads()
+        
+        # Release GIL for parallel execution
+        with nogil:
+            _resample_cubic(data_ptr, output_ptr, in_d, in_h, in_w, out_d, out_h, out_w, scale_d, scale_h, scale_w, cubic_nt, align_corners)
+        return output
+    
     else:
-        raise ValueError(f"Unsupported mode: {mode}. Use 'nearest', 'linear', or 'area'.")
+        raise ValueError(f"Unsupported mode: {mode}. Use 'nearest', 'linear', 'area', or 'cubic'.")
 
 
 def grid_sample(
@@ -272,6 +324,10 @@ def grid_sample(
         raise ValueError(f"Grid must be 5D (N, D_out, H_out, W_out, 3), got {grid_np.ndim}D")
     if grid_np.shape[4] != 3:
         raise ValueError(f"Grid last dimension must be 3, got {grid_np.shape[4]}")
+    if grid_np.shape[0] != input_np.shape[0]:
+        raise ValueError(
+            f"Batch size of input ({input_np.shape[0]}) and grid ({grid_np.shape[0]}) must match"
+        )
     
     cdef int N = input_np.shape[0]
     cdef int C = input_np.shape[1]

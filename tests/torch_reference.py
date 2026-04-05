@@ -25,6 +25,7 @@ class TorchReference:
         data: Any,  # torch.Tensor or np.ndarray
         size: tuple[int, int, int],
         mode: str = "linear",
+        align_corners: bool = False,
     ) -> Any:
         """Resample a 3D volume to a new size using interpolation.
 
@@ -44,6 +45,8 @@ class TorchReference:
                   Note: 'nearest' uses 'nearest-exact' under the hood.
                   For 'nearest' with uint8: stays uint8
                   For 'linear'/'area' with uint8: converts to float32
+            align_corners: Passed through to PyTorch only for trilinear mode.
+                Ignored for nearest and area, matching PyTorch's API.
 
         Returns:
             Resampled array/tensor. Shape is (new_D, new_H, new_W) for 3D inputs,
@@ -101,7 +104,12 @@ class TorchReference:
             data_t = data_t.to(dtype=torch.float32)
 
         # Interpolate. Only pass align_corners for linear/trilinear modes.
-        resampled_t = F.interpolate(data_t, size=size, mode=torch_mode)
+        if torch_mode == "trilinear":
+            resampled_t = F.interpolate(
+                data_t, size=size, mode=torch_mode, align_corners=align_corners
+            )
+        else:
+            resampled_t = F.interpolate(data_t, size=size, mode=torch_mode)
 
         # Remove added dimensions based on original shape
         if orig_ndim == 3:

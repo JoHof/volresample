@@ -1,6 +1,6 @@
 [project]
 name = "volresample"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Fast 3D volume resampling with optimized Cython"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -29,7 +29,10 @@ classifiers = [
 
 [project.urls]
 Homepage = "https://github.com/JoHof/volresample"
-Repository = "https://github.com/JoHof/volresample"
+Source = "https://github.com/JoHof/volresample"
+Documentation = "https://github.com/JoHof/volresample#readme"
+"Release notes" = "https://github.com/JoHof/volresample/blob/main/RELEASE_NOTES.md"
+Releases = "https://github.com/JoHof/volresample/releases"
 
 [build-system]
 requires = [
@@ -65,7 +68,7 @@ environment = {  PIP_VERBOSE = "1", PIP_PROGRESS_BAR = "off", PIP_DISABLE_PIP_VE
 
 # Test the built wheels
 test-requires = ["pytest", "numpy"]
-test-command = "pytest {project}/tests -v --ignore={project}/tests/torch_reference.py --ignore={project}/tests/benchmark_resampling.py"
+test-command = "pytest {project}/tests -v --ignore={project}/tests/torch_reference.py"
 test-skip = ["*-manylinux_aarch64"]  # Skip tests on QEMU-emulated platforms only
 
 # Platform-specific settings
@@ -128,6 +131,7 @@ dev = [
     "pre-commit>=3.0.0",
     "cython>=3.0.0",
     "ipywidgets>=8.1.7",
+    "scipy>=1.13.1",
 ]
 
 [tool.setuptools]
@@ -135,6 +139,9 @@ dev = [
 # Setting this to false prevents MANIFEST.in from leaking
 # .pyx/.pxd/.c into wheels.
 include-package-data = false
+
+[tool.setuptools.dynamic]
+version = {attr = "volresample._version.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
