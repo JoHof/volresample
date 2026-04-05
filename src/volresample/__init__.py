@@ -63,10 +63,9 @@ Thread configuration:
 4
 """
 
-__version__ = "0.1.0"
-
 # Import thread configuration (always available, pure Python)
 from volresample._config import get_num_threads, set_num_threads
+from volresample._version import __version__
 
 try:
     from volresample._resample import grid_sample, resample
