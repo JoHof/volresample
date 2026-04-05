@@ -29,7 +29,10 @@ classifiers = [
 
 [project.urls]
 Homepage = "https://github.com/JoHof/volresample"
-Repository = "https://github.com/JoHof/volresample"
+Source = "https://github.com/JoHof/volresample"
+Documentation = "https://github.com/JoHof/volresample#readme"
+"Release notes" = "https://github.com/JoHof/volresample/blob/main/RELEASE_NOTES.md"
+Releases = "https://github.com/JoHof/volresample/releases"
 
 [build-system]
 requires = [
