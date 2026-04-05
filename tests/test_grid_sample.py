@@ -435,3 +435,27 @@ def test_both_non_contiguous():
 
     max_diff = np.max(np.abs(torch_output - cython_output))
     assert max_diff < TOLERANCE, f"Both non-contiguous: max_diff={max_diff}"
+
+
+# =============================================================================
+# Singleton spatial dimensions (from issue audit)
+# =============================================================================
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
+@pytest.mark.parametrize("mode", ["nearest", "linear"])
+@pytest.mark.parametrize("padding_mode", ["zeros", "border", "reflection"])
+def test_grid_sample_singleton_spatial_dims_match_torch(mode, padding_mode):
+    rng = np.random.default_rng(11)
+    inp = rng.normal(size=(1, 2, 1, 2, 3)).astype(np.float32)
+    grid = rng.uniform(-1.25, 1.25, size=(1, 3, 2, 4, 3)).astype(np.float32)
+    ref = F.grid_sample(
+        torch.from_numpy(inp),
+        torch.from_numpy(grid),
+        mode=torch_mode(mode),
+        padding_mode=padding_mode,
+        align_corners=False,
+    ).numpy()
+    out = volresample.grid_sample(inp, grid, mode=mode, padding_mode=padding_mode)
+    atol = 2e-5 if mode == "linear" else 0.0
+    assert np.allclose(out, ref, atol=atol)

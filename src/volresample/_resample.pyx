@@ -149,6 +149,16 @@ def resample(
     cdef int b, c
     cdef list batch_outputs, channel_outputs
     
+    # Validate size tuple
+    if len(size) != 3:
+        raise ValueError(
+            f"size must be a 3-tuple (D, H, W), got {len(size)} elements"
+        )
+    if size[0] <= 0 or size[1] <= 0 or size[2] <= 0:
+        raise ValueError(
+            f"All output dimensions must be positive, got size={size}"
+        )
+
     # Validate align_corners
     if align_corners and mode not in ("linear", "cubic"):
         raise ValueError(
@@ -314,6 +324,10 @@ def grid_sample(
         raise ValueError(f"Grid must be 5D (N, D_out, H_out, W_out, 3), got {grid_np.ndim}D")
     if grid_np.shape[4] != 3:
         raise ValueError(f"Grid last dimension must be 3, got {grid_np.shape[4]}")
+    if grid_np.shape[0] != input_np.shape[0]:
+        raise ValueError(
+            f"Batch size of input ({input_np.shape[0]}) and grid ({grid_np.shape[0]}) must match"
+        )
     
     cdef int N = input_np.shape[0]
     cdef int C = input_np.shape[1]
