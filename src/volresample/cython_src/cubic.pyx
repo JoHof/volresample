@@ -9,18 +9,23 @@ from libc.string cimport memcpy
 cdef extern from * nogil:
     """
     #if defined(__clang__) || defined(__GNUC__)
-    static inline void volresample_prefetch(const void* addr, int rw, int locality) {
-        __builtin_prefetch(addr, rw, locality);
+    static inline void volresample_prefetch_read(const void* addr) {
+        __builtin_prefetch(addr, 0, 0);
+    }
+    static inline void volresample_prefetch_write(const void* addr) {
+        __builtin_prefetch(addr, 1, 0);
     }
     #else
-    static inline void volresample_prefetch(const void* addr, int rw, int locality) {
+    static inline void volresample_prefetch_read(const void* addr) {
         (void)addr;
-        (void)rw;
-        (void)locality;
+    }
+    static inline void volresample_prefetch_write(const void* addr) {
+        (void)addr;
     }
     #endif
     """
-    void volresample_prefetch(const void* addr, int rw, int locality)
+    void volresample_prefetch_read(const void* addr)
+    void volresample_prefetch_write(const void* addr)
 
 # ---------------------------------------------------------------------------
 # Boundary helper: reflect100 (scipy 'reflect')
@@ -169,14 +174,14 @@ cdef void _prefilter_3d(double* data, int d, int h, int w,
         # Copy strided -> contiguous with gain fused + prefetch
         for k in range(d):
             if k + 8 < d:
-                volresample_prefetch(<const void*>&data[(k + 8) * hw + i], 0, 0)
+                volresample_prefetch_read(<const void*>&data[(k + 8) * hw + i])
             temp[k] = data[k * hw + i] * gain_d
         # Filter in L1
         _prefilter_1d_core_gained(temp, d, z_n_d)
         # Copy back with prefetch
         for k in range(d):
             if k + 8 < d:
-                volresample_prefetch(<const void*>&data[(k + 8) * hw + i], 1, 0)
+                volresample_prefetch_write(<const void*>&data[(k + 8) * hw + i])
             data[k * hw + i] = temp[k]
 
     free(temps)
