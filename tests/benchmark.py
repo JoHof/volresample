@@ -561,9 +561,12 @@ def build_resample_torch_cases() -> list[ResampleCase]:
         ResampleCase("3D nearest", (128, 128, 128), (64, 64, 64), "nearest"),
         ResampleCase("3D nearest u8", (128, 128, 128), (64, 64, 64), "nearest", np.uint8),
         ResampleCase("3D nearest i16", (128, 128, 128), (64, 64, 64), "nearest", np.int16),
+        ResampleCase("3D nearest 512->256", (512, 512, 512), (256, 256, 256), "nearest"),
         ResampleCase("3D linear ds", (128, 128, 128), (64, 64, 64), "linear"),
         ResampleCase("3D linear up", (96, 96, 96), (144, 144, 144), "linear", align_corners=True),
+        ResampleCase("3D linear 512->256", (512, 512, 512), (256, 256, 256), "linear"),
         ResampleCase("3D area", (160, 160, 160), (80, 80, 80), "area"),
+        ResampleCase("3D area 512->64", (512, 512, 512), (64, 64, 64), "area"),
         ResampleCase("4D linear", (4, 96, 96, 96), (64, 64, 64), "linear"),
         ResampleCase("5D linear", (2, 4, 80, 80, 80), (48, 48, 48), "linear"),
     ]
