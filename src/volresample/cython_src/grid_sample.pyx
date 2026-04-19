@@ -449,13 +449,16 @@ cdef void _grid_sample_bilinear_zeros(
     float* grid_ptr,
     float* output_ptr,
     int N, int C, int D_in, int H_in, int W_in,
-    int D_out, int H_out, int W_out
+    int D_out, int H_out, int W_out,
+    float fill_value=0.0
 ) noexcept nogil:
-    """3D trilinear grid sample with zeros padding.
+    """3D trilinear grid sample with constant fill padding.
     
-    Optimized for AVX2 auto-vectorization with proper loop structure.
+    Parallelizes over N * C * D_out work items so that batch and channel
+    dimensions contribute to thread utilization.
+    Out-of-bounds samples use fill_value (default 0.0 for zeros padding).
     """
-    cdef int n, c, d, h, w
+    cdef int task_id, n, c, d, h, w, remainder
     cdef int d0, d1, h0, h1, w0, w1
     cdef float ix, iy, iz
     cdef float d_frac, h_frac, w_frac
@@ -472,63 +475,67 @@ cdef void _grid_sample_bilinear_zeros(
     cdef int grid_idx, out_idx, in_base
     cdef int ib000, ib001, ib010, ib011, ib100, ib101, ib110, ib111
     cdef float val
-    
-    # Parallelize over first spatial dimension (D for 3D, H for 2D)
-    for n in range(N):
-        for d in prange(D_out, schedule='static'):  
-            for h in range(H_out):
-                for w in range(W_out):
-                    # Grid coordinates: x (W), y (H), z (D)
-                    grid_idx = n * grid_stride_n + d * grid_stride_d + h * W_out * 3 + w * 3
-                    ix = unnormalize_coord(grid_ptr[grid_idx], W_in)      # x -> W
-                    iy = unnormalize_coord(grid_ptr[grid_idx + 1], H_in)  # y -> H
-                    iz = unnormalize_coord(grid_ptr[grid_idx + 2], D_in)  # z -> D
-                    
-                    w0 = <int>floor(ix)
-                    h0 = <int>floor(iy)
-                    d0 = <int>floor(iz)
-                    w1 = w0 + 1
-                    h1 = h0 + 1
-                    d1 = d0 + 1
-                    
-                    w_frac = ix - <float>w0
-                    h_frac = iy - <float>h0
-                    d_frac = iz - <float>d0
-                    w_frac_1 = 1.0 - w_frac
-                    h_frac_1 = 1.0 - h_frac
-                    d_frac_1 = 1.0 - d_frac
-                    
-                    # Check bounds for each corner
-                    ib000 = (d0 >= 0 and d0 < D_in and h0 >= 0 and h0 < H_in and w0 >= 0 and w0 < W_in)
-                    ib001 = (d0 >= 0 and d0 < D_in and h0 >= 0 and h0 < H_in and w1 >= 0 and w1 < W_in)
-                    ib010 = (d0 >= 0 and d0 < D_in and h1 >= 0 and h1 < H_in and w0 >= 0 and w0 < W_in)
-                    ib011 = (d0 >= 0 and d0 < D_in and h1 >= 0 and h1 < H_in and w1 >= 0 and w1 < W_in)
-                    ib100 = (d1 >= 0 and d1 < D_in and h0 >= 0 and h0 < H_in and w0 >= 0 and w0 < W_in)
-                    ib101 = (d1 >= 0 and d1 < D_in and h0 >= 0 and h0 < H_in and w1 >= 0 and w1 < W_in)
-                    ib110 = (d1 >= 0 and d1 < D_in and h1 >= 0 and h1 < H_in and w0 >= 0 and w0 < W_in)
-                    ib111 = (d1 >= 0 and d1 < D_in and h1 >= 0 and h1 < H_in and w1 >= 0 and w1 < W_in)
-                    
-                    for c in range(C):
-                        in_base = n * in_stride_n + c * in_stride_c
-                        
-                        # Get values (zero if out of bounds)
-                        v000 = input_ptr[in_base + d0 * in_stride_d + h0 * W_in + w0] if ib000 else 0.0
-                        v001 = input_ptr[in_base + d0 * in_stride_d + h0 * W_in + w1] if ib001 else 0.0
-                        v010 = input_ptr[in_base + d0 * in_stride_d + h1 * W_in + w0] if ib010 else 0.0
-                        v011 = input_ptr[in_base + d0 * in_stride_d + h1 * W_in + w1] if ib011 else 0.0
-                        v100 = input_ptr[in_base + d1 * in_stride_d + h0 * W_in + w0] if ib100 else 0.0
-                        v101 = input_ptr[in_base + d1 * in_stride_d + h0 * W_in + w1] if ib101 else 0.0
-                        v110 = input_ptr[in_base + d1 * in_stride_d + h1 * W_in + w0] if ib110 else 0.0
-                        v111 = input_ptr[in_base + d1 * in_stride_d + h1 * W_in + w1] if ib111 else 0.0
-                        
-                        # Trilinear interpolation
-                        val = (d_frac_1 * (h_frac_1 * (w_frac_1 * v000 + w_frac * v001) +
-                                           h_frac * (w_frac_1 * v010 + w_frac * v011)) +
-                               d_frac * (h_frac_1 * (w_frac_1 * v100 + w_frac * v101) +
-                                         h_frac * (w_frac_1 * v110 + w_frac * v111)))
-                        
-                        out_idx = n * out_stride_n + c * out_stride_c + d * out_stride_d + h * W_out + w
-                        output_ptr[out_idx] = val
+    cdef int total_tasks = N * C * D_out
+    cdef int CD = C * D_out
+
+    for task_id in prange(total_tasks, schedule='static'):
+        n = task_id / CD
+        remainder = task_id - n * CD
+        c = remainder / D_out
+        d = remainder - c * D_out
+
+        in_base = n * in_stride_n + c * in_stride_c
+
+        for h in range(H_out):
+            for w in range(W_out):
+                # Grid coordinates: x (W), y (H), z (D)
+                grid_idx = n * grid_stride_n + d * grid_stride_d + h * W_out * 3 + w * 3
+                ix = unnormalize_coord(grid_ptr[grid_idx], W_in)      # x -> W
+                iy = unnormalize_coord(grid_ptr[grid_idx + 1], H_in)  # y -> H
+                iz = unnormalize_coord(grid_ptr[grid_idx + 2], D_in)  # z -> D
+
+                w0 = <int>floor(ix)
+                h0 = <int>floor(iy)
+                d0 = <int>floor(iz)
+                w1 = w0 + 1
+                h1 = h0 + 1
+                d1 = d0 + 1
+
+                w_frac = ix - <float>w0
+                h_frac = iy - <float>h0
+                d_frac = iz - <float>d0
+                w_frac_1 = 1.0 - w_frac
+                h_frac_1 = 1.0 - h_frac
+                d_frac_1 = 1.0 - d_frac
+
+                # Check bounds for each corner
+                ib000 = (d0 >= 0 and d0 < D_in and h0 >= 0 and h0 < H_in and w0 >= 0 and w0 < W_in)
+                ib001 = (d0 >= 0 and d0 < D_in and h0 >= 0 and h0 < H_in and w1 >= 0 and w1 < W_in)
+                ib010 = (d0 >= 0 and d0 < D_in and h1 >= 0 and h1 < H_in and w0 >= 0 and w0 < W_in)
+                ib011 = (d0 >= 0 and d0 < D_in and h1 >= 0 and h1 < H_in and w1 >= 0 and w1 < W_in)
+                ib100 = (d1 >= 0 and d1 < D_in and h0 >= 0 and h0 < H_in and w0 >= 0 and w0 < W_in)
+                ib101 = (d1 >= 0 and d1 < D_in and h0 >= 0 and h0 < H_in and w1 >= 0 and w1 < W_in)
+                ib110 = (d1 >= 0 and d1 < D_in and h1 >= 0 and h1 < H_in and w0 >= 0 and w0 < W_in)
+                ib111 = (d1 >= 0 and d1 < D_in and h1 >= 0 and h1 < H_in and w1 >= 0 and w1 < W_in)
+
+                # Get values (fill_value if out of bounds)
+                v000 = input_ptr[in_base + d0 * in_stride_d + h0 * W_in + w0] if ib000 else fill_value
+                v001 = input_ptr[in_base + d0 * in_stride_d + h0 * W_in + w1] if ib001 else fill_value
+                v010 = input_ptr[in_base + d0 * in_stride_d + h1 * W_in + w0] if ib010 else fill_value
+                v011 = input_ptr[in_base + d0 * in_stride_d + h1 * W_in + w1] if ib011 else fill_value
+                v100 = input_ptr[in_base + d1 * in_stride_d + h0 * W_in + w0] if ib100 else fill_value
+                v101 = input_ptr[in_base + d1 * in_stride_d + h0 * W_in + w1] if ib101 else fill_value
+                v110 = input_ptr[in_base + d1 * in_stride_d + h1 * W_in + w0] if ib110 else fill_value
+                v111 = input_ptr[in_base + d1 * in_stride_d + h1 * W_in + w1] if ib111 else fill_value
+
+                # Trilinear interpolation
+                val = (d_frac_1 * (h_frac_1 * (w_frac_1 * v000 + w_frac * v001) +
+                                   h_frac * (w_frac_1 * v010 + w_frac * v011)) +
+                       d_frac * (h_frac_1 * (w_frac_1 * v100 + w_frac * v101) +
+                                 h_frac * (w_frac_1 * v110 + w_frac * v111)))
+
+                out_idx = n * out_stride_n + c * out_stride_c + d * out_stride_d + h * W_out + w
+                output_ptr[out_idx] = val
 
 
 cdef void _grid_sample_bilinear_border(
@@ -538,8 +545,11 @@ cdef void _grid_sample_bilinear_border(
     int N, int C, int D_in, int H_in, int W_in,
     int D_out, int H_out, int W_out
 ) noexcept nogil:
-    """3D trilinear grid sample with border padding."""
-    cdef int n, c, d, h, w
+    """3D trilinear grid sample with border padding.
+    
+    Parallelizes over N * C * D_out work items.
+    """
+    cdef int task_id, n, c, d, h, w, remainder
     cdef int d0, d1, h0, h1, w0, w1
     cdef float ix, iy, iz
     cdef float d_frac, h_frac, w_frac
@@ -558,63 +568,68 @@ cdef void _grid_sample_bilinear_border(
     cdef int D_max = D_in - 1
     cdef int H_max = H_in - 1
     cdef int W_max = W_in - 1
-    
-    for n in range(N):
-        for d in prange(D_out, schedule='static'):  
-            for h in range(H_out):
-                for w in range(W_out):
-                    grid_idx = n * grid_stride_n + d * grid_stride_d + h * W_out * 3 + w * 3
-                    ix = unnormalize_coord(grid_ptr[grid_idx], W_in)
-                    iy = unnormalize_coord(grid_ptr[grid_idx + 1], H_in)
-                    iz = unnormalize_coord(grid_ptr[grid_idx + 2], D_in)
-                    
-                    w0 = <int>floor(ix)
-                    h0 = <int>floor(iy)
-                    d0 = <int>floor(iz)
-                    w1 = w0 + 1
-                    h1 = h0 + 1
-                    d1 = d0 + 1
-                    
-                    w_frac = ix - <float>w0
-                    h_frac = iy - <float>h0
-                    d_frac = iz - <float>d0
-                    w_frac_1 = 1.0 - w_frac
-                    h_frac_1 = 1.0 - h_frac
-                    d_frac_1 = 1.0 - d_frac
-                    
-                    # Clamp indices
-                    if w0 < 0: w0 = 0
-                    elif w0 > W_max: w0 = W_max
-                    if w1 < 0: w1 = 0
-                    elif w1 > W_max: w1 = W_max
-                    if h0 < 0: h0 = 0
-                    elif h0 > H_max: h0 = H_max
-                    if h1 < 0: h1 = 0
-                    elif h1 > H_max: h1 = H_max
-                    if d0 < 0: d0 = 0
-                    elif d0 > D_max: d0 = D_max
-                    if d1 < 0: d1 = 0
-                    elif d1 > D_max: d1 = D_max
-                    
-                    for c in range(C):
-                        in_base = n * in_stride_n + c * in_stride_c
-                        
-                        v000 = input_ptr[in_base + d0 * in_stride_d + h0 * W_in + w0]
-                        v001 = input_ptr[in_base + d0 * in_stride_d + h0 * W_in + w1]
-                        v010 = input_ptr[in_base + d0 * in_stride_d + h1 * W_in + w0]
-                        v011 = input_ptr[in_base + d0 * in_stride_d + h1 * W_in + w1]
-                        v100 = input_ptr[in_base + d1 * in_stride_d + h0 * W_in + w0]
-                        v101 = input_ptr[in_base + d1 * in_stride_d + h0 * W_in + w1]
-                        v110 = input_ptr[in_base + d1 * in_stride_d + h1 * W_in + w0]
-                        v111 = input_ptr[in_base + d1 * in_stride_d + h1 * W_in + w1]
-                        
-                        val = (d_frac_1 * (h_frac_1 * (w_frac_1 * v000 + w_frac * v001) +
-                                           h_frac * (w_frac_1 * v010 + w_frac * v011)) +
-                               d_frac * (h_frac_1 * (w_frac_1 * v100 + w_frac * v101) +
-                                         h_frac * (w_frac_1 * v110 + w_frac * v111)))
-                        
-                        out_idx = n * out_stride_n + c * out_stride_c + d * out_stride_d + h * W_out + w
-                        output_ptr[out_idx] = val
+    cdef int total_tasks = N * C * D_out
+    cdef int CD = C * D_out
+
+    for task_id in prange(total_tasks, schedule='static'):
+        n = task_id / CD
+        remainder = task_id - n * CD
+        c = remainder / D_out
+        d = remainder - c * D_out
+
+        in_base = n * in_stride_n + c * in_stride_c
+
+        for h in range(H_out):
+            for w in range(W_out):
+                grid_idx = n * grid_stride_n + d * grid_stride_d + h * W_out * 3 + w * 3
+                ix = unnormalize_coord(grid_ptr[grid_idx], W_in)
+                iy = unnormalize_coord(grid_ptr[grid_idx + 1], H_in)
+                iz = unnormalize_coord(grid_ptr[grid_idx + 2], D_in)
+
+                w0 = <int>floor(ix)
+                h0 = <int>floor(iy)
+                d0 = <int>floor(iz)
+                w1 = w0 + 1
+                h1 = h0 + 1
+                d1 = d0 + 1
+
+                w_frac = ix - <float>w0
+                h_frac = iy - <float>h0
+                d_frac = iz - <float>d0
+                w_frac_1 = 1.0 - w_frac
+                h_frac_1 = 1.0 - h_frac
+                d_frac_1 = 1.0 - d_frac
+
+                # Clamp indices
+                if w0 < 0: w0 = 0
+                elif w0 > W_max: w0 = W_max
+                if w1 < 0: w1 = 0
+                elif w1 > W_max: w1 = W_max
+                if h0 < 0: h0 = 0
+                elif h0 > H_max: h0 = H_max
+                if h1 < 0: h1 = 0
+                elif h1 > H_max: h1 = H_max
+                if d0 < 0: d0 = 0
+                elif d0 > D_max: d0 = D_max
+                if d1 < 0: d1 = 0
+                elif d1 > D_max: d1 = D_max
+
+                v000 = input_ptr[in_base + d0 * in_stride_d + h0 * W_in + w0]
+                v001 = input_ptr[in_base + d0 * in_stride_d + h0 * W_in + w1]
+                v010 = input_ptr[in_base + d0 * in_stride_d + h1 * W_in + w0]
+                v011 = input_ptr[in_base + d0 * in_stride_d + h1 * W_in + w1]
+                v100 = input_ptr[in_base + d1 * in_stride_d + h0 * W_in + w0]
+                v101 = input_ptr[in_base + d1 * in_stride_d + h0 * W_in + w1]
+                v110 = input_ptr[in_base + d1 * in_stride_d + h1 * W_in + w0]
+                v111 = input_ptr[in_base + d1 * in_stride_d + h1 * W_in + w1]
+
+                val = (d_frac_1 * (h_frac_1 * (w_frac_1 * v000 + w_frac * v001) +
+                                   h_frac * (w_frac_1 * v010 + w_frac * v011)) +
+                       d_frac * (h_frac_1 * (w_frac_1 * v100 + w_frac * v101) +
+                                 h_frac * (w_frac_1 * v110 + w_frac * v111)))
+
+                out_idx = n * out_stride_n + c * out_stride_c + d * out_stride_d + h * W_out + w
+                output_ptr[out_idx] = val
 
 
 cdef void _grid_sample_bilinear_reflection(
@@ -624,8 +639,11 @@ cdef void _grid_sample_bilinear_reflection(
     int N, int C, int D_in, int H_in, int W_in,
     int D_out, int H_out, int W_out
 ) noexcept nogil:
-    """3D trilinear grid sample with reflection padding."""
-    cdef int n, c, d, h, w
+    """3D trilinear grid sample with reflection padding.
+    
+    Parallelizes over N * C * D_out work items.
+    """
+    cdef int task_id, n, c, d, h, w, remainder
     cdef int d0, d1, h0, h1, w0, w1
     cdef int d0_r, d1_r, h0_r, h1_r, w0_r, w1_r
     cdef float ix, iy, iz
@@ -642,68 +660,78 @@ cdef void _grid_sample_bilinear_reflection(
     cdef int grid_stride_d = H_out * W_out * 3
     cdef int grid_idx, out_idx, in_base
     cdef float val
-    
-    for n in range(N):
-        for d in prange(D_out, schedule='static'):  
-            for h in range(H_out):
-                for w in range(W_out):
-                    grid_idx = n * grid_stride_n + d * grid_stride_d + h * W_out * 3 + w * 3
-                    ix = unnormalize_coord(grid_ptr[grid_idx], W_in)
-                    iy = unnormalize_coord(grid_ptr[grid_idx + 1], H_in)
-                    iz = unnormalize_coord(grid_ptr[grid_idx + 2], D_in)
-                    
-                    w0 = <int>floor(ix)
-                    h0 = <int>floor(iy)
-                    d0 = <int>floor(iz)
-                    w1 = w0 + 1
-                    h1 = h0 + 1
-                    d1 = d0 + 1
-                    
-                    w_frac = ix - <float>w0
-                    h_frac = iy - <float>h0
-                    d_frac = iz - <float>d0
-                    w_frac_1 = 1.0 - w_frac
-                    h_frac_1 = 1.0 - h_frac
-                    d_frac_1 = 1.0 - d_frac
-                    
-                    # Reflect indices
-                    w0_r = reflect_bound(w0, W_in)
-                    w1_r = reflect_bound(w1, W_in)
-                    h0_r = reflect_bound(h0, H_in)
-                    h1_r = reflect_bound(h1, H_in)
-                    d0_r = reflect_bound(d0, D_in)
-                    d1_r = reflect_bound(d1, D_in)
-                    
-                    for c in range(C):
-                        in_base = n * in_stride_n + c * in_stride_c
-                        
-                        v000 = input_ptr[in_base + d0_r * in_stride_d + h0_r * W_in + w0_r]
-                        v001 = input_ptr[in_base + d0_r * in_stride_d + h0_r * W_in + w1_r]
-                        v010 = input_ptr[in_base + d0_r * in_stride_d + h1_r * W_in + w0_r]
-                        v011 = input_ptr[in_base + d0_r * in_stride_d + h1_r * W_in + w1_r]
-                        v100 = input_ptr[in_base + d1_r * in_stride_d + h0_r * W_in + w0_r]
-                        v101 = input_ptr[in_base + d1_r * in_stride_d + h0_r * W_in + w1_r]
-                        v110 = input_ptr[in_base + d1_r * in_stride_d + h1_r * W_in + w0_r]
-                        v111 = input_ptr[in_base + d1_r * in_stride_d + h1_r * W_in + w1_r]
-                        
-                        val = (d_frac_1 * (h_frac_1 * (w_frac_1 * v000 + w_frac * v001) +
-                                           h_frac * (w_frac_1 * v010 + w_frac * v011)) +
-                               d_frac * (h_frac_1 * (w_frac_1 * v100 + w_frac * v101) +
-                                         h_frac * (w_frac_1 * v110 + w_frac * v111)))
-                        
-                        out_idx = n * out_stride_n + c * out_stride_c + d * out_stride_d + h * W_out + w
-                        output_ptr[out_idx] = val
+    cdef int total_tasks = N * C * D_out
+    cdef int CD = C * D_out
+
+    for task_id in prange(total_tasks, schedule='static'):
+        n = task_id / CD
+        remainder = task_id - n * CD
+        c = remainder / D_out
+        d = remainder - c * D_out
+
+        in_base = n * in_stride_n + c * in_stride_c
+
+        for h in range(H_out):
+            for w in range(W_out):
+                grid_idx = n * grid_stride_n + d * grid_stride_d + h * W_out * 3 + w * 3
+                ix = unnormalize_coord(grid_ptr[grid_idx], W_in)
+                iy = unnormalize_coord(grid_ptr[grid_idx + 1], H_in)
+                iz = unnormalize_coord(grid_ptr[grid_idx + 2], D_in)
+
+                w0 = <int>floor(ix)
+                h0 = <int>floor(iy)
+                d0 = <int>floor(iz)
+                w1 = w0 + 1
+                h1 = h0 + 1
+                d1 = d0 + 1
+
+                w_frac = ix - <float>w0
+                h_frac = iy - <float>h0
+                d_frac = iz - <float>d0
+                w_frac_1 = 1.0 - w_frac
+                h_frac_1 = 1.0 - h_frac
+                d_frac_1 = 1.0 - d_frac
+
+                # Reflect indices
+                w0_r = reflect_bound(w0, W_in)
+                w1_r = reflect_bound(w1, W_in)
+                h0_r = reflect_bound(h0, H_in)
+                h1_r = reflect_bound(h1, H_in)
+                d0_r = reflect_bound(d0, D_in)
+                d1_r = reflect_bound(d1, D_in)
+
+                v000 = input_ptr[in_base + d0_r * in_stride_d + h0_r * W_in + w0_r]
+                v001 = input_ptr[in_base + d0_r * in_stride_d + h0_r * W_in + w1_r]
+                v010 = input_ptr[in_base + d0_r * in_stride_d + h1_r * W_in + w0_r]
+                v011 = input_ptr[in_base + d0_r * in_stride_d + h1_r * W_in + w1_r]
+                v100 = input_ptr[in_base + d1_r * in_stride_d + h0_r * W_in + w0_r]
+                v101 = input_ptr[in_base + d1_r * in_stride_d + h0_r * W_in + w1_r]
+                v110 = input_ptr[in_base + d1_r * in_stride_d + h1_r * W_in + w0_r]
+                v111 = input_ptr[in_base + d1_r * in_stride_d + h1_r * W_in + w1_r]
+
+                val = (d_frac_1 * (h_frac_1 * (w_frac_1 * v000 + w_frac * v001) +
+                                   h_frac * (w_frac_1 * v010 + w_frac * v011)) +
+                       d_frac * (h_frac_1 * (w_frac_1 * v100 + w_frac * v101) +
+                                 h_frac * (w_frac_1 * v110 + w_frac * v111)))
+
+                out_idx = n * out_stride_n + c * out_stride_c + d * out_stride_d + h * W_out + w
+                output_ptr[out_idx] = val
 
 
 cdef void _grid_sample_nearest_zeros(
-    float* input_ptr,
+    numeric_type* input_ptr,
     float* grid_ptr,
-    float* output_ptr,
+    numeric_type* output_ptr,
     int N, int C, int D_in, int H_in, int W_in,
-    int D_out, int H_out, int W_out
+    int D_out, int H_out, int W_out,
+    numeric_type fill_value=0
 ) noexcept nogil:
-    """3D nearest neighbor grid sample with zeros padding."""
-    cdef int n, c, d, h, w
+    """3D nearest neighbor grid sample with constant fill padding.
+    
+    Parallelizes over N * C * D_out work items.
+    Out-of-bounds samples use fill_value (default 0 for zeros padding).
+    """
+    cdef int task_id, n, c, d, h, w, remainder
     cdef int d_idx, h_idx, w_idx
     cdef float ix, iy, iz
     cdef int in_stride_n = C * D_in * H_in * W_in
@@ -716,43 +744,52 @@ cdef void _grid_sample_nearest_zeros(
     cdef int grid_stride_d = H_out * W_out * 3
     cdef int grid_idx, out_idx, in_base
     cdef int in_bounds
-    
-    for n in range(N):
-        for d in prange(D_out, schedule='static'):  
-            for h in range(H_out):
-                for w in range(W_out):
-                    grid_idx = n * grid_stride_n + d * grid_stride_d + h * W_out * 3 + w * 3
-                    ix = unnormalize_coord(grid_ptr[grid_idx], W_in)
-                    iy = unnormalize_coord(grid_ptr[grid_idx + 1], H_in)
-                    iz = unnormalize_coord(grid_ptr[grid_idx + 2], D_in)
-                    
-                    # Round to nearest using banker's rounding (matches PyTorch)
-                    w_idx = round_to_nearest(ix)
-                    h_idx = round_to_nearest(iy)
-                    d_idx = round_to_nearest(iz)
-                    
-                    in_bounds = (d_idx >= 0 and d_idx < D_in and 
-                                 h_idx >= 0 and h_idx < H_in and 
-                                 w_idx >= 0 and w_idx < W_in)
-                    
-                    for c in range(C):
-                        out_idx = n * out_stride_n + c * out_stride_c + d * out_stride_d + h * W_out + w
-                        if in_bounds:
-                            in_base = n * in_stride_n + c * in_stride_c
-                            output_ptr[out_idx] = input_ptr[in_base + d_idx * in_stride_d + h_idx * W_in + w_idx]
-                        else:
-                            output_ptr[out_idx] = 0.0
+    cdef int total_tasks = N * C * D_out
+    cdef int CD = C * D_out
+
+    for task_id in prange(total_tasks, schedule='static'):
+        n = task_id / CD
+        remainder = task_id - n * CD
+        c = remainder / D_out
+        d = remainder - c * D_out
+
+        in_base = n * in_stride_n + c * in_stride_c
+
+        for h in range(H_out):
+            for w in range(W_out):
+                grid_idx = n * grid_stride_n + d * grid_stride_d + h * W_out * 3 + w * 3
+                ix = unnormalize_coord(grid_ptr[grid_idx], W_in)
+                iy = unnormalize_coord(grid_ptr[grid_idx + 1], H_in)
+                iz = unnormalize_coord(grid_ptr[grid_idx + 2], D_in)
+
+                # Round to nearest using banker's rounding (matches PyTorch)
+                w_idx = round_to_nearest(ix)
+                h_idx = round_to_nearest(iy)
+                d_idx = round_to_nearest(iz)
+
+                out_idx = n * out_stride_n + c * out_stride_c + d * out_stride_d + h * W_out + w
+                in_bounds = (d_idx >= 0 and d_idx < D_in and
+                             h_idx >= 0 and h_idx < H_in and
+                             w_idx >= 0 and w_idx < W_in)
+
+                if in_bounds:
+                    output_ptr[out_idx] = input_ptr[in_base + d_idx * in_stride_d + h_idx * W_in + w_idx]
+                else:
+                    output_ptr[out_idx] = fill_value
 
 
 cdef void _grid_sample_nearest_border(
-    float* input_ptr,
+    numeric_type* input_ptr,
     float* grid_ptr,
-    float* output_ptr,
+    numeric_type* output_ptr,
     int N, int C, int D_in, int H_in, int W_in,
     int D_out, int H_out, int W_out
 ) noexcept nogil:
-    """3D nearest neighbor grid sample with border padding."""
-    cdef int n, c, d, h, w
+    """3D nearest neighbor grid sample with border padding.
+    
+    Parallelizes over N * C * D_out work items.
+    """
+    cdef int task_id, n, c, d, h, w, remainder
     cdef int d_idx, h_idx, w_idx
     cdef float ix, iy, iz
     cdef int in_stride_n = C * D_in * H_in * W_in
@@ -767,44 +804,53 @@ cdef void _grid_sample_nearest_border(
     cdef int D_max = D_in - 1
     cdef int H_max = H_in - 1
     cdef int W_max = W_in - 1
-    
-    for n in range(N):
-        for d in prange(D_out, schedule='static'):  
-            for h in range(H_out):
-                for w in range(W_out):
-                    grid_idx = n * grid_stride_n + d * grid_stride_d + h * W_out * 3 + w * 3
-                    ix = unnormalize_coord(grid_ptr[grid_idx], W_in)
-                    iy = unnormalize_coord(grid_ptr[grid_idx + 1], H_in)
-                    iz = unnormalize_coord(grid_ptr[grid_idx + 2], D_in)
-                    
-                    # Round to nearest using banker's rounding (matches PyTorch)
-                    w_idx = round_to_nearest(ix)
-                    h_idx = round_to_nearest(iy)
-                    d_idx = round_to_nearest(iz)
-                    
-                    # Clamp to valid range
-                    if w_idx < 0: w_idx = 0
-                    elif w_idx > W_max: w_idx = W_max
-                    if h_idx < 0: h_idx = 0
-                    elif h_idx > H_max: h_idx = H_max
-                    if d_idx < 0: d_idx = 0
-                    elif d_idx > D_max: d_idx = D_max
-                    
-                    for c in range(C):
-                        in_base = n * in_stride_n + c * in_stride_c
-                        out_idx = n * out_stride_n + c * out_stride_c + d * out_stride_d + h * W_out + w
-                        output_ptr[out_idx] = input_ptr[in_base + d_idx * in_stride_d + h_idx * W_in + w_idx]
+    cdef int total_tasks = N * C * D_out
+    cdef int CD = C * D_out
+
+    for task_id in prange(total_tasks, schedule='static'):
+        n = task_id / CD
+        remainder = task_id - n * CD
+        c = remainder / D_out
+        d = remainder - c * D_out
+
+        in_base = n * in_stride_n + c * in_stride_c
+
+        for h in range(H_out):
+            for w in range(W_out):
+                grid_idx = n * grid_stride_n + d * grid_stride_d + h * W_out * 3 + w * 3
+                ix = unnormalize_coord(grid_ptr[grid_idx], W_in)
+                iy = unnormalize_coord(grid_ptr[grid_idx + 1], H_in)
+                iz = unnormalize_coord(grid_ptr[grid_idx + 2], D_in)
+
+                # Round to nearest using banker's rounding (matches PyTorch)
+                w_idx = round_to_nearest(ix)
+                h_idx = round_to_nearest(iy)
+                d_idx = round_to_nearest(iz)
+
+                # Clamp to valid range
+                if w_idx < 0: w_idx = 0
+                elif w_idx > W_max: w_idx = W_max
+                if h_idx < 0: h_idx = 0
+                elif h_idx > H_max: h_idx = H_max
+                if d_idx < 0: d_idx = 0
+                elif d_idx > D_max: d_idx = D_max
+
+                out_idx = n * out_stride_n + c * out_stride_c + d * out_stride_d + h * W_out + w
+                output_ptr[out_idx] = input_ptr[in_base + d_idx * in_stride_d + h_idx * W_in + w_idx]
 
 
 cdef void _grid_sample_nearest_reflection(
-    float* input_ptr,
+    numeric_type* input_ptr,
     float* grid_ptr,
-    float* output_ptr,
+    numeric_type* output_ptr,
     int N, int C, int D_in, int H_in, int W_in,
     int D_out, int H_out, int W_out
 ) noexcept nogil:
-    """3D nearest neighbor grid sample with reflection padding."""
-    cdef int n, c, d, h, w
+    """3D nearest neighbor grid sample with reflection padding.
+    
+    Parallelizes over N * C * D_out work items.
+    """
+    cdef int task_id, n, c, d, h, w, remainder
     cdef int d_idx, h_idx, w_idx
     cdef float ix, iy, iz
     cdef int in_stride_n = C * D_in * H_in * W_in
@@ -816,27 +862,33 @@ cdef void _grid_sample_nearest_reflection(
     cdef int grid_stride_n = D_out * H_out * W_out * 3
     cdef int grid_stride_d = H_out * W_out * 3
     cdef int grid_idx, out_idx, in_base
-    
-    for n in range(N):
-        for d in prange(D_out, schedule='static'):  
-            for h in range(H_out):
-                for w in range(W_out):
-                    grid_idx = n * grid_stride_n + d * grid_stride_d + h * W_out * 3 + w * 3
-                    ix = unnormalize_coord(grid_ptr[grid_idx], W_in)
-                    iy = unnormalize_coord(grid_ptr[grid_idx + 1], H_in)
-                    iz = unnormalize_coord(grid_ptr[grid_idx + 2], D_in)
-                    
-                    # Round to nearest using banker's rounding (matches PyTorch)
-                    w_idx = round_to_nearest(ix)
-                    h_idx = round_to_nearest(iy)
-                    d_idx = round_to_nearest(iz)
-                    
-                    # Reflect
-                    w_idx = reflect_bound(w_idx, W_in)
-                    h_idx = reflect_bound(h_idx, H_in)
-                    d_idx = reflect_bound(d_idx, D_in)
-                    
-                    for c in range(C):
-                        in_base = n * in_stride_n + c * in_stride_c
-                        out_idx = n * out_stride_n + c * out_stride_c + d * out_stride_d + h * W_out + w
-                        output_ptr[out_idx] = input_ptr[in_base + d_idx * in_stride_d + h_idx * W_in + w_idx]
+    cdef int total_tasks = N * C * D_out
+    cdef int CD = C * D_out
+
+    for task_id in prange(total_tasks, schedule='static'):
+        n = task_id / CD
+        remainder = task_id - n * CD
+        c = remainder / D_out
+        d = remainder - c * D_out
+
+        in_base = n * in_stride_n + c * in_stride_c
+
+        for h in range(H_out):
+            for w in range(W_out):
+                grid_idx = n * grid_stride_n + d * grid_stride_d + h * W_out * 3 + w * 3
+                ix = unnormalize_coord(grid_ptr[grid_idx], W_in)
+                iy = unnormalize_coord(grid_ptr[grid_idx + 1], H_in)
+                iz = unnormalize_coord(grid_ptr[grid_idx + 2], D_in)
+
+                # Round to nearest using banker's rounding (matches PyTorch)
+                w_idx = round_to_nearest(ix)
+                h_idx = round_to_nearest(iy)
+                d_idx = round_to_nearest(iz)
+
+                # Reflect
+                w_idx = reflect_bound(w_idx, W_in)
+                h_idx = reflect_bound(h_idx, H_in)
+                d_idx = reflect_bound(d_idx, D_in)
+
+                out_idx = n * out_stride_n + c * out_stride_c + d * out_stride_d + h * W_out + w
+                output_ptr[out_idx] = input_ptr[in_base + d_idx * in_stride_d + h_idx * W_in + w_idx]

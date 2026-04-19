@@ -347,18 +347,26 @@ def grid_sample(
     grid,
     str mode="linear",
     str padding_mode="zeros",
+    fill_value=0,
 ):
     """Sample input using a sampling grid (similar to PyTorch's grid_sample).
     
     Args:
         input: Input array, shape (N, C, D, H, W).
+            Supports uint8, int16, float32 for nearest mode; float32 for linear.
         grid: Sampling grid, shape (N, D_out, H_out, W_out, 3).
               Values in range [-1, 1] where -1 is the start and 1 is the end.
         mode: Interpolation mode - 'linear' or 'nearest'.
-        padding_mode: Padding mode for out-of-bounds values - 'zeros', 'border', 'reflection'.
+        padding_mode: Padding mode for out-of-bounds values - 'zeros', 'border',
+            'reflection', or 'constant'.
+        fill_value: Fill value for out-of-bounds samples when
+            padding_mode='constant'. Defaults to 0. For integer dtypes in
+            nearest mode, the value is clamped to the valid dtype range.
         
     Returns:
         Sampled array of shape (N, C, D_out, H_out, W_out).
+        For nearest mode, preserves input dtype.
+        For linear mode, returns float32.
         
     Note:
         The behavior matches PyTorch's grid_sample with align_corners=False.
@@ -374,9 +382,14 @@ def grid_sample(
         >>> output.shape
         (1, 2, 24, 24, 24)
     """
-    # Ensure C-contiguous memory layout for both input and grid
-    cdef cnp.ndarray input_np = np.ascontiguousarray(input, dtype=np.float32)
+    # Grid is always float32
     cdef cnp.ndarray grid_np = np.ascontiguousarray(grid, dtype=np.float32)
+    # Input: preserve dtype for nearest mode, convert to float32 for linear
+    cdef cnp.ndarray input_np
+    if mode == "nearest":
+        input_np = np.ascontiguousarray(input)
+    else:
+        input_np = np.ascontiguousarray(input, dtype=np.float32)
     
     if input_np.ndim != 5:
         raise ValueError(f"Input must be 5D (N, C, D, H, W), got {input_np.ndim}D")
@@ -398,54 +411,106 @@ def grid_sample(
     cdef int out_h = grid_np.shape[2]
     cdef int out_w = grid_np.shape[3]
     
-    cdef cnp.ndarray[cnp.float32_t, ndim=5] output = np.empty((N, C, out_d, out_h, out_w), dtype=np.float32)
+    cdef cnp.ndarray output
     cdef float* input_ptr
     cdef float* grid_ptr
     cdef float* output_ptr
+    cdef uint8_t* input_ptr_u8
+    cdef uint8_t* output_ptr_u8
+    cdef int16_t* input_ptr_i16
+    cdef int16_t* output_ptr_i16
+    cdef float fill_f32
+    cdef uint8_t fill_u8
+    cdef int16_t fill_i16
+    cdef int fill_int
     
     # Apply global thread settings
     _apply_thread_settings()
     
-    # Determine which grid_sample function to call
     # Accept both 'linear' and 'bilinear' for compatibility
-    cdef int padding_id = 0  # 0=zeros, 1=border, 2=reflection
-    
     if mode not in ("nearest", "linear", "bilinear"):
         raise ValueError(f"Unsupported mode: {mode}. Use 'nearest' or 'linear'.")
     
-    if padding_mode == "zeros":
-        padding_id = 0
-    elif padding_mode == "border":
-        padding_id = 1
-    elif padding_mode == "reflection":
-        padding_id = 2
-    else:
+    if padding_mode not in ("zeros", "border", "reflection", "constant"):
         raise ValueError(f"Unsupported padding_mode: {padding_mode}")
     
-    # Get pointers to the data
-    input_ptr = <float*>cnp.PyArray_DATA(input_np)
-    grid_ptr = <float*>cnp.PyArray_DATA(grid_np)
-    output_ptr = <float*>cnp.PyArray_DATA(output)
+    # Treat "zeros" as "constant" with fill_value=0
+    if padding_mode == "zeros":
+        padding_mode = "constant"
+        fill_value = 0
     
-    # Call appropriate grid_sample function
+    # Grid pointer is always float32
+    grid_ptr = <float*>cnp.PyArray_DATA(grid_np)
+    
+    # Dispatch based on mode and dtype
     if mode == "nearest":
-        if padding_mode == "zeros":
-            with nogil:
-                _grid_sample_nearest_zeros(input_ptr, grid_ptr, output_ptr,
-                                         N, C, in_d, in_h, in_w, out_d, out_h, out_w)
-        elif padding_mode == "border":
-            with nogil:
-                _grid_sample_nearest_border(input_ptr, grid_ptr, output_ptr,
-                                          N, C, in_d, in_h, in_w, out_d, out_h, out_w)
-        elif padding_mode == "reflection":
-            with nogil:
-                _grid_sample_nearest_reflection(input_ptr, grid_ptr, output_ptr,
+        if input_np.dtype == np.uint8:
+            output = np.empty((N, C, out_d, out_h, out_w), dtype=np.uint8)
+            input_ptr_u8 = <uint8_t*>cnp.PyArray_DATA(input_np)
+            output_ptr_u8 = <uint8_t*>cnp.PyArray_DATA(output)
+            if padding_mode == "constant":
+                fill_int = max(0, min(255, int(round(fill_value))))
+                fill_u8 = <uint8_t>fill_int
+                with nogil:
+                    _grid_sample_nearest_zeros(input_ptr_u8, grid_ptr, output_ptr_u8,
+                                             N, C, in_d, in_h, in_w, out_d, out_h, out_w,
+                                             fill_u8)
+            elif padding_mode == "border":
+                with nogil:
+                    _grid_sample_nearest_border(input_ptr_u8, grid_ptr, output_ptr_u8,
                                               N, C, in_d, in_h, in_w, out_d, out_h, out_w)
+            elif padding_mode == "reflection":
+                with nogil:
+                    _grid_sample_nearest_reflection(input_ptr_u8, grid_ptr, output_ptr_u8,
+                                                  N, C, in_d, in_h, in_w, out_d, out_h, out_w)
+        elif input_np.dtype == np.int16:
+            output = np.empty((N, C, out_d, out_h, out_w), dtype=np.int16)
+            input_ptr_i16 = <int16_t*>cnp.PyArray_DATA(input_np)
+            output_ptr_i16 = <int16_t*>cnp.PyArray_DATA(output)
+            if padding_mode == "constant":
+                fill_int = max(-32768, min(32767, int(round(fill_value))))
+                fill_i16 = <int16_t>fill_int
+                with nogil:
+                    _grid_sample_nearest_zeros(input_ptr_i16, grid_ptr, output_ptr_i16,
+                                             N, C, in_d, in_h, in_w, out_d, out_h, out_w,
+                                             fill_i16)
+            elif padding_mode == "border":
+                with nogil:
+                    _grid_sample_nearest_border(input_ptr_i16, grid_ptr, output_ptr_i16,
+                                              N, C, in_d, in_h, in_w, out_d, out_h, out_w)
+            elif padding_mode == "reflection":
+                with nogil:
+                    _grid_sample_nearest_reflection(input_ptr_i16, grid_ptr, output_ptr_i16,
+                                                  N, C, in_d, in_h, in_w, out_d, out_h, out_w)
+        else:
+            input_np = np.ascontiguousarray(input_np, dtype=np.float32)
+            output = np.empty((N, C, out_d, out_h, out_w), dtype=np.float32)
+            input_ptr = <float*>cnp.PyArray_DATA(input_np)
+            output_ptr = <float*>cnp.PyArray_DATA(output)
+            if padding_mode == "constant":
+                fill_f32 = <float>fill_value
+                with nogil:
+                    _grid_sample_nearest_zeros(input_ptr, grid_ptr, output_ptr,
+                                             N, C, in_d, in_h, in_w, out_d, out_h, out_w,
+                                             fill_f32)
+            elif padding_mode == "border":
+                with nogil:
+                    _grid_sample_nearest_border(input_ptr, grid_ptr, output_ptr,
+                                              N, C, in_d, in_h, in_w, out_d, out_h, out_w)
+            elif padding_mode == "reflection":
+                with nogil:
+                    _grid_sample_nearest_reflection(input_ptr, grid_ptr, output_ptr,
+                                                  N, C, in_d, in_h, in_w, out_d, out_h, out_w)
     else:  # linear (or bilinear for compatibility)
-        if padding_mode == "zeros":
+        output = np.empty((N, C, out_d, out_h, out_w), dtype=np.float32)
+        input_ptr = <float*>cnp.PyArray_DATA(input_np)
+        output_ptr = <float*>cnp.PyArray_DATA(output)
+        if padding_mode == "constant":
+            fill_f32 = <float>fill_value
             with nogil:
                 _grid_sample_bilinear_zeros(input_ptr, grid_ptr, output_ptr,
-                                          N, C, in_d, in_h, in_w, out_d, out_h, out_w)
+                                          N, C, in_d, in_h, in_w, out_d, out_h, out_w,
+                                          fill_f32)
         elif padding_mode == "border":
             with nogil:
                 _grid_sample_bilinear_border(input_ptr, grid_ptr, output_ptr,

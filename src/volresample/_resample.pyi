@@ -46,30 +46,38 @@ def resample(
     ...
 
 def grid_sample(
-    input: NDArray[np.float32],
+    input: NDArray[np.float32] | NDArray[np.uint8] | NDArray[np.int16],
     grid: NDArray[np.float32],
     mode: Literal["linear", "nearest"] = "linear",
-    padding_mode: Literal["zeros", "border", "reflection"] = "zeros",
-) -> NDArray[np.float32]:
+    padding_mode: Literal["zeros", "border", "reflection", "constant"] = "zeros",
+    fill_value: float = 0,
+) -> NDArray[np.float32] | NDArray[np.uint8] | NDArray[np.int16]:
     """Sample input at arbitrary locations specified by a grid.
 
     Similar to PyTorch's F.grid_sample for 3D volumes.
 
     Args:
         input: Input array of shape (N, C, D, H, W).
+            Supported dtypes: uint8, int16, float32.
         grid: Sampling grid of shape (N, D_out, H_out, W_out, 3).
             Values in range [-1, 1] where -1 maps to the first voxel
             and 1 maps to the last voxel.
         mode: Interpolation mode:
-            - 'linear': Trilinear interpolation
-            - 'nearest': Nearest neighbor
+            - 'linear': Trilinear interpolation (float32 only)
+            - 'nearest': Nearest neighbor (works with all dtypes)
         padding_mode: How to handle out-of-bounds grid values:
             - 'zeros': Use 0 for out-of-bounds samples
             - 'border': Use border values for out-of-bounds samples
             - 'reflection': Reflect coordinates at boundaries
+            - 'constant': Use fill_value for out-of-bounds samples
+        fill_value: Fill value for out-of-bounds samples when
+            padding_mode is 'constant'. For integer dtypes in nearest mode,
+            the value is clamped to the valid dtype range. Defaults to 0.
 
     Returns:
         Sampled array of shape (N, C, D_out, H_out, W_out).
+        - For nearest mode: preserves input dtype.
+        - For linear mode: returns float32.
 
     Note:
         The behavior matches PyTorch's grid_sample with align_corners=False.
