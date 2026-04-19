@@ -158,7 +158,7 @@ Resample a 3D, 4D, or 5D volume to a new size.
 - `uint8`, `int16`: Only with `mode='nearest'`
 - `float32`: All modes (`nearest`, `linear`, `area`, `cubic`)
 
-### `grid_sample(input, grid, mode='linear', padding_mode='zeros')`
+### `grid_sample(input, grid, mode='linear', padding_mode='zeros', fill_value=0)`
 
 Sample input at arbitrary locations specified by a grid.
 
@@ -167,7 +167,8 @@ Sample input at arbitrary locations specified by a grid.
 - `grid` (ndarray): Sampling grid of shape `(N, D_out, H_out, W_out, 3)`
   - Values in range `[-1, 1]` where -1 maps to the first voxel, 1 to the last
 - `mode` (str): `'nearest'` or `'linear'`
-- `padding_mode` (str): `'zeros'`, `'border'`, or `'reflection'`
+- `padding_mode` (str): `'zeros'`, `'border'`, `'reflection'`, or `'constant'`
+- `fill_value` (float): Fill value for out-of-bounds samples when `padding_mode='constant'`. For integer dtypes in nearest mode, the value is clamped to the valid range. Default: `0`
 
 **PyTorch correspondence:**
 

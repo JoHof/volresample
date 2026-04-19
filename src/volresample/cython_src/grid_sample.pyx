@@ -449,12 +449,14 @@ cdef void _grid_sample_bilinear_zeros(
     float* grid_ptr,
     float* output_ptr,
     int N, int C, int D_in, int H_in, int W_in,
-    int D_out, int H_out, int W_out
+    int D_out, int H_out, int W_out,
+    float fill_value=0.0
 ) noexcept nogil:
-    """3D trilinear grid sample with zeros padding.
+    """3D trilinear grid sample with constant fill padding.
     
     Parallelizes over N * C * D_out work items so that batch and channel
     dimensions contribute to thread utilization.
+    Out-of-bounds samples use fill_value (default 0.0 for zeros padding).
     """
     cdef int task_id, n, c, d, h, w, remainder
     cdef int d0, d1, h0, h1, w0, w1
@@ -516,15 +518,15 @@ cdef void _grid_sample_bilinear_zeros(
                 ib110 = (d1 >= 0 and d1 < D_in and h1 >= 0 and h1 < H_in and w0 >= 0 and w0 < W_in)
                 ib111 = (d1 >= 0 and d1 < D_in and h1 >= 0 and h1 < H_in and w1 >= 0 and w1 < W_in)
 
-                # Get values (zero if out of bounds)
-                v000 = input_ptr[in_base + d0 * in_stride_d + h0 * W_in + w0] if ib000 else 0.0
-                v001 = input_ptr[in_base + d0 * in_stride_d + h0 * W_in + w1] if ib001 else 0.0
-                v010 = input_ptr[in_base + d0 * in_stride_d + h1 * W_in + w0] if ib010 else 0.0
-                v011 = input_ptr[in_base + d0 * in_stride_d + h1 * W_in + w1] if ib011 else 0.0
-                v100 = input_ptr[in_base + d1 * in_stride_d + h0 * W_in + w0] if ib100 else 0.0
-                v101 = input_ptr[in_base + d1 * in_stride_d + h0 * W_in + w1] if ib101 else 0.0
-                v110 = input_ptr[in_base + d1 * in_stride_d + h1 * W_in + w0] if ib110 else 0.0
-                v111 = input_ptr[in_base + d1 * in_stride_d + h1 * W_in + w1] if ib111 else 0.0
+                # Get values (fill_value if out of bounds)
+                v000 = input_ptr[in_base + d0 * in_stride_d + h0 * W_in + w0] if ib000 else fill_value
+                v001 = input_ptr[in_base + d0 * in_stride_d + h0 * W_in + w1] if ib001 else fill_value
+                v010 = input_ptr[in_base + d0 * in_stride_d + h1 * W_in + w0] if ib010 else fill_value
+                v011 = input_ptr[in_base + d0 * in_stride_d + h1 * W_in + w1] if ib011 else fill_value
+                v100 = input_ptr[in_base + d1 * in_stride_d + h0 * W_in + w0] if ib100 else fill_value
+                v101 = input_ptr[in_base + d1 * in_stride_d + h0 * W_in + w1] if ib101 else fill_value
+                v110 = input_ptr[in_base + d1 * in_stride_d + h1 * W_in + w0] if ib110 else fill_value
+                v111 = input_ptr[in_base + d1 * in_stride_d + h1 * W_in + w1] if ib111 else fill_value
 
                 # Trilinear interpolation
                 val = (d_frac_1 * (h_frac_1 * (w_frac_1 * v000 + w_frac * v001) +
@@ -721,11 +723,13 @@ cdef void _grid_sample_nearest_zeros(
     float* grid_ptr,
     numeric_type* output_ptr,
     int N, int C, int D_in, int H_in, int W_in,
-    int D_out, int H_out, int W_out
+    int D_out, int H_out, int W_out,
+    numeric_type fill_value=0
 ) noexcept nogil:
-    """3D nearest neighbor grid sample with zeros padding.
+    """3D nearest neighbor grid sample with constant fill padding.
     
     Parallelizes over N * C * D_out work items.
+    Out-of-bounds samples use fill_value (default 0 for zeros padding).
     """
     cdef int task_id, n, c, d, h, w, remainder
     cdef int d_idx, h_idx, w_idx
@@ -771,7 +775,7 @@ cdef void _grid_sample_nearest_zeros(
                 if in_bounds:
                     output_ptr[out_idx] = input_ptr[in_base + d_idx * in_stride_d + h_idx * W_in + w_idx]
                 else:
-                    output_ptr[out_idx] = 0
+                    output_ptr[out_idx] = fill_value
 
 
 cdef void _grid_sample_nearest_border(

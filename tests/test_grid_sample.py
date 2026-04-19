@@ -877,3 +877,150 @@ class TestGridSampleNearestDtypeTorchParity:
         result = volresample.grid_sample(data, grid, mode="nearest", padding_mode=padding_mode)
         assert result.dtype == dtype
         np.testing.assert_array_equal(result, ref.astype(dtype))
+
+
+# =============================================================================
+# Constant Padding Mode Tests
+# =============================================================================
+
+
+class TestConstantPadding:
+    """Tests for padding_mode='constant' with custom fill_value."""
+
+    def test_constant_with_zero_matches_zeros(self):
+        """padding_mode='constant' with fill_value=0 should match 'zeros'."""
+        input_data = generate_test_data((1, 2, 8, 8, 8))
+        grid = create_random_grid_3d(1, 6, 6, 6, range_min=-1.5, range_max=1.5)
+
+        out_zeros = volresample.grid_sample(input_data, grid, padding_mode="zeros")
+        out_const = volresample.grid_sample(
+            input_data, grid, padding_mode="constant", fill_value=0.0
+        )
+        np.testing.assert_array_equal(out_zeros, out_const)
+
+    def test_constant_with_zero_matches_zeros_nearest(self):
+        """Same equivalence for nearest mode."""
+        input_data = generate_test_data((1, 2, 8, 8, 8))
+        grid = create_random_grid_3d(1, 6, 6, 6, range_min=-1.5, range_max=1.5)
+
+        out_zeros = volresample.grid_sample(input_data, grid, mode="nearest", padding_mode="zeros")
+        out_const = volresample.grid_sample(
+            input_data, grid, mode="nearest", padding_mode="constant", fill_value=0.0
+        )
+        np.testing.assert_array_equal(out_zeros, out_const)
+
+    def test_constant_linear_fill_value(self):
+        """OOB samples with linear mode should interpolate with fill_value."""
+        # Create input with all 1s and a grid that goes fully OOB
+        input_data = np.ones((1, 1, 4, 4, 4), dtype=np.float32)
+        # Grid pointing far outside => all samples OOB
+        grid = np.full((1, 2, 2, 2, 3), 5.0, dtype=np.float32)
+
+        result = volresample.grid_sample(input_data, grid, padding_mode="constant", fill_value=42.0)
+        np.testing.assert_allclose(result, 42.0)
+
+    def test_constant_nearest_fill_value_float32(self):
+        """OOB samples with nearest mode float32 should use fill_value."""
+        input_data = np.ones((1, 1, 4, 4, 4), dtype=np.float32)
+        grid = np.full((1, 2, 2, 2, 3), 5.0, dtype=np.float32)
+
+        result = volresample.grid_sample(
+            input_data, grid, mode="nearest", padding_mode="constant", fill_value=-1.0
+        )
+        np.testing.assert_allclose(result, -1.0)
+
+    def test_constant_nearest_fill_value_uint8(self):
+        """OOB uint8 nearest samples should use clamped fill_value."""
+        input_data = np.ones((1, 1, 4, 4, 4), dtype=np.uint8)
+        grid = np.full((1, 2, 2, 2, 3), 5.0, dtype=np.float32)
+
+        result = volresample.grid_sample(
+            input_data, grid, mode="nearest", padding_mode="constant", fill_value=128
+        )
+        assert result.dtype == np.uint8
+        np.testing.assert_array_equal(result, 128)
+
+    def test_constant_nearest_fill_value_uint8_clamp(self):
+        """uint8 fill value should be clamped to [0, 255]."""
+        input_data = np.ones((1, 1, 4, 4, 4), dtype=np.uint8)
+        grid = np.full((1, 2, 2, 2, 3), 5.0, dtype=np.float32)
+
+        result = volresample.grid_sample(
+            input_data, grid, mode="nearest", padding_mode="constant", fill_value=300
+        )
+        assert result.dtype == np.uint8
+        np.testing.assert_array_equal(result, 255)
+
+        result_neg = volresample.grid_sample(
+            input_data, grid, mode="nearest", padding_mode="constant", fill_value=-10
+        )
+        np.testing.assert_array_equal(result_neg, 0)
+
+    def test_constant_nearest_fill_value_int16(self):
+        """OOB int16 nearest samples should use clamped fill_value."""
+        input_data = np.ones((1, 1, 4, 4, 4), dtype=np.int16)
+        grid = np.full((1, 2, 2, 2, 3), 5.0, dtype=np.float32)
+
+        result = volresample.grid_sample(
+            input_data, grid, mode="nearest", padding_mode="constant", fill_value=-500
+        )
+        assert result.dtype == np.int16
+        np.testing.assert_array_equal(result, -500)
+
+    def test_constant_nearest_fill_value_int16_clamp(self):
+        """int16 fill value should be clamped to [-32768, 32767]."""
+        input_data = np.ones((1, 1, 4, 4, 4), dtype=np.int16)
+        grid = np.full((1, 2, 2, 2, 3), 5.0, dtype=np.float32)
+
+        result = volresample.grid_sample(
+            input_data, grid, mode="nearest", padding_mode="constant", fill_value=40000
+        )
+        assert result.dtype == np.int16
+        np.testing.assert_array_equal(result, 32767)
+
+    def test_constant_partial_oob_linear(self):
+        """Partially OOB grid: in-bounds samples use input, OOB uses fill."""
+        input_data = np.full((1, 1, 4, 4, 4), 10.0, dtype=np.float32)
+        # Mix of in-bounds and OOB coordinates
+        grid = np.zeros((1, 1, 1, 2, 3), dtype=np.float32)
+        grid[0, 0, 0, 0, :] = [0.0, 0.0, 0.0]  # center, in-bounds
+        grid[0, 0, 0, 1, :] = [5.0, 5.0, 5.0]  # far OOB
+
+        result = volresample.grid_sample(input_data, grid, padding_mode="constant", fill_value=99.0)
+        # In-bounds should be ~10.0
+        np.testing.assert_allclose(result[0, 0, 0, 0, 0], 10.0, atol=0.1)
+        # OOB should be 99.0
+        np.testing.assert_allclose(result[0, 0, 0, 0, 1], 99.0)
+
+    def test_constant_multichannel_batch(self):
+        """Constant padding works correctly with multiple channels and batches."""
+        rng = np.random.RandomState(77)
+        input_data = rng.randn(2, 3, 6, 6, 6).astype(np.float32)
+        grid = create_random_grid_3d(2, 4, 4, 4, range_min=-2.0, range_max=2.0)
+
+        result = volresample.grid_sample(input_data, grid, padding_mode="constant", fill_value=7.5)
+        assert result.shape == (2, 3, 4, 4, 4)
+        assert result.dtype == np.float32
+
+    def test_constant_modes_produce_output(self):
+        """Smoke test: all modes with constant padding produce valid outputs."""
+        input_data = generate_test_data((1, 1, 4, 4, 4))
+        grid = create_identity_grid_3d(1, 2, 2, 2)
+
+        for mode in ["linear", "nearest"]:
+            output = volresample.grid_sample(
+                input_data, grid, mode=mode, padding_mode="constant", fill_value=1.0
+            )
+            assert output.shape == (1, 1, 2, 2, 2)
+            assert np.all(np.isfinite(output))
+
+    def test_constant_uint8_fill_rounding(self):
+        """Float fill values should be rounded for uint8."""
+        input_data = np.ones((1, 1, 4, 4, 4), dtype=np.uint8)
+        grid = np.full((1, 1, 1, 1, 3), 5.0, dtype=np.float32)
+
+        result = volresample.grid_sample(
+            input_data, grid, mode="nearest", padding_mode="constant", fill_value=100.7
+        )
+        assert result.dtype == np.uint8
+        np.testing.assert_array_equal(result, 101)  # round(100.7) = 101

@@ -46,7 +46,8 @@ cdef void _grid_sample_2d_nearest_reflection(
 # 3D functions (5D input)
 cdef void _grid_sample_bilinear_zeros(
     float* input_ptr, float* grid_ptr, float* output_ptr,
-    int N, int C, int D_in, int H_in, int W_in, int D_out, int H_out, int W_out
+    int N, int C, int D_in, int H_in, int W_in, int D_out, int H_out, int W_out,
+    float fill_value=*
 ) noexcept nogil
 
 cdef void _grid_sample_bilinear_border(
@@ -61,7 +62,8 @@ cdef void _grid_sample_bilinear_reflection(
 
 cdef void _grid_sample_nearest_zeros(
     grid_numeric_type* input_ptr, float* grid_ptr, grid_numeric_type* output_ptr,
-    int N, int C, int D_in, int H_in, int W_in, int D_out, int H_out, int W_out
+    int N, int C, int D_in, int H_in, int W_in, int D_out, int H_out, int W_out,
+    grid_numeric_type fill_value=*
 ) noexcept nogil
 
 cdef void _grid_sample_nearest_border(

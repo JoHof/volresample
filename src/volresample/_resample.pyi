@@ -49,7 +49,8 @@ def grid_sample(
     input: NDArray[np.float32] | NDArray[np.uint8] | NDArray[np.int16],
     grid: NDArray[np.float32],
     mode: Literal["linear", "nearest"] = "linear",
-    padding_mode: Literal["zeros", "border", "reflection"] = "zeros",
+    padding_mode: Literal["zeros", "border", "reflection", "constant"] = "zeros",
+    fill_value: float = 0,
 ) -> NDArray[np.float32] | NDArray[np.uint8] | NDArray[np.int16]:
     """Sample input at arbitrary locations specified by a grid.
 
@@ -68,6 +69,10 @@ def grid_sample(
             - 'zeros': Use 0 for out-of-bounds samples
             - 'border': Use border values for out-of-bounds samples
             - 'reflection': Reflect coordinates at boundaries
+            - 'constant': Use fill_value for out-of-bounds samples
+        fill_value: Fill value for out-of-bounds samples when
+            padding_mode is 'constant'. For integer dtypes in nearest mode,
+            the value is clamped to the valid dtype range. Defaults to 0.
 
     Returns:
         Sampled array of shape (N, C, D_out, H_out, W_out).
