@@ -15,7 +15,7 @@ Implemented against PyTorch's `F.interpolate` and `F.grid_sample` as a reference
 - Interpolation modes: nearest, linear, area, and cubic
 - Supports 3D, 4D (multi-channel), and 5D (batched multi-channel) volumes
 - Supports `align_corners=True` for linear and cubic resampling
-- Supports uint8, int16 (nearest) and float32 dtypes (all other modes)
+- Supports uint8, int16 (nearest) and float32 dtypes (all other modes) for both `resample` and `grid_sample`
 
 ## Installation
 
@@ -180,6 +180,10 @@ The behavior matches PyTorch's `grid_sample` with `align_corners=False`.
 
 **Returns:**
 - Sampled array of shape `(N, C, D_out, H_out, W_out)`
+
+**Supported Dtypes:**
+- `uint8`, `int16`: Only with `mode='nearest'`
+- `float32`: All modes (`nearest`, `linear`)
 
 ### `set_num_threads(num_threads)`
 
