@@ -696,9 +696,9 @@ cdef void _grid_sample_bilinear_reflection(
 
 
 cdef void _grid_sample_nearest_zeros(
-    float* input_ptr,
+    numeric_type* input_ptr,
     float* grid_ptr,
-    float* output_ptr,
+    numeric_type* output_ptr,
     int N, int C, int D_in, int H_in, int W_in,
     int D_out, int H_out, int W_out
 ) noexcept nogil:
@@ -741,13 +741,13 @@ cdef void _grid_sample_nearest_zeros(
                             in_base = n * in_stride_n + c * in_stride_c
                             output_ptr[out_idx] = input_ptr[in_base + d_idx * in_stride_d + h_idx * W_in + w_idx]
                         else:
-                            output_ptr[out_idx] = 0.0
+                            output_ptr[out_idx] = 0
 
 
 cdef void _grid_sample_nearest_border(
-    float* input_ptr,
+    numeric_type* input_ptr,
     float* grid_ptr,
-    float* output_ptr,
+    numeric_type* output_ptr,
     int N, int C, int D_in, int H_in, int W_in,
     int D_out, int H_out, int W_out
 ) noexcept nogil:
@@ -797,9 +797,9 @@ cdef void _grid_sample_nearest_border(
 
 
 cdef void _grid_sample_nearest_reflection(
-    float* input_ptr,
+    numeric_type* input_ptr,
     float* grid_ptr,
-    float* output_ptr,
+    numeric_type* output_ptr,
     int N, int C, int D_in, int H_in, int W_in,
     int D_out, int H_out, int W_out
 ) noexcept nogil:
