@@ -4,6 +4,10 @@ Notable changes in volresample are summarized here by release.
 
 The canonical published artifacts are attached to GitHub Releases and published on PyPI.
 
+## 0.4.1
+
+- Small performance improvement for nearest interpolation, specifically on larger input sizes
+
 
 ## 0.4.0
 
