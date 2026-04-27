@@ -14,6 +14,28 @@ if TORCH_AVAILABLE:
     from torch_reference import TorchReference
 
 
+def _nearest_expected(data: np.ndarray, out_size: tuple[int, int, int]) -> np.ndarray:
+    idx_arrays = []
+    for in_n, out_n in zip(data.shape, out_size):
+        src = (np.arange(out_n, dtype=np.float32) + 0.5) * (in_n / out_n) - 0.5
+        idx = np.floor(src + 0.5).astype(np.intp)
+        idx_arrays.append(np.clip(idx, 0, in_n - 1))
+    return data[np.ix_(*idx_arrays)]
+
+
+def _nearest_align_corners_expected(data: np.ndarray, out_size: tuple[int, int, int]) -> np.ndarray:
+    """Nearest-neighbor with align_corners=True coordinate mapping."""
+    idx_arrays = []
+    for in_n, out_n in zip(data.shape, out_size):
+        if out_n > 1:
+            src = np.arange(out_n, dtype=np.float64) * (in_n - 1) / (out_n - 1)
+        else:
+            src = np.zeros(1, dtype=np.float64)
+        idx = np.floor(src + 0.5).astype(np.intp)
+        idx_arrays.append(np.clip(idx, 0, in_n - 1))
+    return data[np.ix_(*idx_arrays)]
+
+
 # ============================================================================
 # Basic smoke tests (no external reference needed)
 # ============================================================================
@@ -66,6 +88,31 @@ def test_resample_5d_area():
     assert np.allclose(out, 1.0)
 
 
+@pytest.mark.parametrize("dtype", [np.float32, np.uint8, np.int16])
+@pytest.mark.parametrize(
+    "in_shape,out_size",
+    [
+        ((2, 2, 4), (4, 4, 4)),
+        ((2, 2, 5), (4, 4, 7)),
+        ((3, 8, 8), (3, 2, 2)),
+    ],
+)
+def test_resample_3d_nearest_repeated_mappings(dtype, in_shape, out_size):
+    base = np.arange(np.prod(in_shape), dtype=np.int32).reshape(in_shape)
+    if dtype == np.float32:
+        data = (base / 3.0).astype(np.float32)
+    elif dtype == np.uint8:
+        data = (base * 17 % 251).astype(np.uint8)
+    else:
+        data = (base * 97 - 400).astype(np.int16)
+
+    out = volresample.resample(data, out_size, mode="nearest")
+    expected = _nearest_expected(data, out_size)
+
+    assert out.dtype == data.dtype
+    np.testing.assert_array_equal(out, expected)
+
+
 # ============================================================================
 # Linear align_corners (no torch)
 # ============================================================================
@@ -103,6 +150,100 @@ def test_linear_align_corners_false_unchanged():
     out_default = volresample.resample(data, (8, 8, 8), mode="linear")
     out_explicit = volresample.resample(data, (8, 8, 8), mode="linear", align_corners=False)
     assert np.array_equal(out_default, out_explicit)
+
+
+# ============================================================================
+# Nearest align_corners
+# ============================================================================
+
+
+def test_nearest_align_corners_basic():
+    """align_corners=True maps corner output indices to corner input indices."""
+    arr = np.arange(27, dtype=np.float32).reshape(3, 3, 3)
+    out = volresample.resample(arr, (5, 5, 5), mode="nearest", align_corners=True)
+    assert out.shape == (5, 5, 5)
+    # First output voxel must map to first input voxel
+    assert out[0, 0, 0] == arr[0, 0, 0]
+    # Last output voxel must map to last input voxel
+    assert out[-1, -1, -1] == arr[-1, -1, -1]
+
+
+def test_nearest_align_corners_correctness():
+    """Output must match the reference NumPy implementation for align_corners=True."""
+    rng = np.random.RandomState(7)
+    data = rng.randint(0, 256, size=(8, 12, 10)).astype(np.float32)
+    out = volresample.resample(data, (5, 7, 13), mode="nearest", align_corners=True)
+    expected = _nearest_align_corners_expected(data, (5, 7, 13))
+    np.testing.assert_array_equal(out, expected)
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.uint8, np.int16])
+@pytest.mark.parametrize(
+    "in_shape,out_size",
+    [
+        ((4, 4, 4), (7, 7, 7)),
+        ((8, 8, 8), (4, 4, 4)),
+        ((3, 5, 7), (6, 3, 9)),
+        ((1, 4, 4), (1, 8, 8)),
+        ((4, 4, 1), (8, 8, 1)),
+    ],
+)
+def test_nearest_align_corners_dtypes(dtype, in_shape, out_size):
+    """align_corners=True must preserve dtype and produce correct values."""
+    base = np.arange(np.prod(in_shape), dtype=np.int32).reshape(in_shape)
+    if dtype == np.float32:
+        data = (base / 3.0).astype(np.float32)
+    elif dtype == np.uint8:
+        data = (base * 17 % 251).astype(np.uint8)
+    else:
+        data = (base * 97 - 400).astype(np.int16)
+    out = volresample.resample(data, out_size, mode="nearest", align_corners=True)
+    expected = _nearest_align_corners_expected(data, out_size)
+    assert out.dtype == data.dtype
+    np.testing.assert_array_equal(out, expected)
+
+
+def test_nearest_align_corners_false_unchanged():
+    """align_corners=False (default) must not change when explicit."""
+    rng = np.random.RandomState(99)
+    data = rng.randn(16, 16, 16).astype(np.float32)
+    out_default = volresample.resample(data, (8, 8, 8), mode="nearest")
+    out_explicit = volresample.resample(data, (8, 8, 8), mode="nearest", align_corners=False)
+    assert np.array_equal(out_default, out_explicit)
+
+
+def test_nearest_align_corners_differ_from_default():
+    """align_corners=True and False should give different results for non-trivial sizes."""
+    rng = np.random.RandomState(5)
+    data = rng.randn(7, 7, 7).astype(np.float32)
+    out_ac = volresample.resample(data, (11, 11, 11), mode="nearest", align_corners=True)
+    out_no = volresample.resample(data, (11, 11, 11), mode="nearest", align_corners=False)
+    assert not np.array_equal(
+        out_ac, out_no
+    ), "Expected different results for align_corners True vs False"
+
+
+def test_nearest_align_corners_4d():
+    """align_corners=True works for 4D (C, D, H, W) input."""
+    arr = np.arange(128, dtype=np.float32).reshape(2, 4, 4, 4)
+    out = volresample.resample(arr, (7, 7, 7), mode="nearest", align_corners=True)
+    assert out.shape == (2, 7, 7, 7)
+    assert out.dtype == arr.dtype
+
+
+def test_nearest_align_corners_5d():
+    """align_corners=True works for 5D (N, C, D, H, W) input."""
+    arr = np.arange(256, dtype=np.float32).reshape(2, 2, 4, 4, 4)
+    out = volresample.resample(arr, (7, 7, 7), mode="nearest", align_corners=True)
+    assert out.shape == (2, 2, 7, 7, 7)
+    assert out.dtype == arr.dtype
+
+
+def test_nearest_align_corners_identity():
+    """align_corners=True with same input/output size is identity."""
+    data = np.arange(64, dtype=np.float32).reshape(4, 4, 4)
+    out = volresample.resample(data, (4, 4, 4), mode="nearest", align_corners=True)
+    np.testing.assert_array_equal(out, data)
 
 
 # ============================================================================

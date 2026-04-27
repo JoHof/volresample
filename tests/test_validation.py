@@ -22,8 +22,6 @@ if TORCH_AVAILABLE:
 def test_align_corners_invalid_modes():
     arr = np.ones((4, 4, 4), dtype=np.float32)
     with pytest.raises(ValueError, match="align_corners"):
-        volresample.resample(arr, (2, 2, 2), mode="nearest", align_corners=True)
-    with pytest.raises(ValueError, match="align_corners"):
         volresample.resample(arr, (2, 2, 2), mode="area", align_corners=True)
 
 
