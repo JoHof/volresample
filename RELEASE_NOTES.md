@@ -4,6 +4,14 @@ Notable changes in volresample are summarized here by release.
 
 The canonical published artifacts are attached to GitHub Releases and published on PyPI.
 
+## 0.5.0
+
+- Add `align_corners=True` support for nearest neighbor interpolation.
+  Corner output voxels map exactly to corner input voxels using `i * (in_n - 1) / (out_n - 1)` coordinate mapping.
+  Works with all dtypes (`uint8`, `int16`, `float32`) and all input shapes (3D, 4D, 5D).
+  Note: this mode has no PyTorch equivalent.
+
+
 ## 0.4.1
 
 - Small performance improvement for nearest interpolation, specifically on larger input sizes
