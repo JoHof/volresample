@@ -14,7 +14,7 @@ Implemented against PyTorch's `F.interpolate` and `F.grid_sample` as a reference
 - Simple API: `resample()` and `grid_sample()`
 - Interpolation modes: nearest, linear, area, and cubic
 - Supports 3D, 4D (multi-channel), and 5D (batched multi-channel) volumes
-- Supports `align_corners=True` for linear and cubic resampling
+- Supports `align_corners=True` for nearest, linear, and cubic resampling
 - Supports uint8, int16 (nearest) and float32 dtypes (all other modes) for both `resample` and `grid_sample`
 
 ## Installation
@@ -59,8 +59,12 @@ resampled = volresample.resample(volume, (64, 64, 64), mode='cubic')
 ### Align Corners
 
 ```python
-# For linear and cubic modes, align_corners=True preserves the corner voxels.
+# For nearest, linear, and cubic modes, align_corners=True preserves the corner voxels.
 aligned = volresample.resample(volume, (192, 192, 192), mode='linear', align_corners=True)
+
+# Nearest with align_corners=True: corner input voxels map exactly to corner output voxels.
+# This is not supported by PyTorch's interpolate, but follows the same geometric convention.
+nearest_ac = volresample.resample(volume, (192, 192, 192), mode='nearest', align_corners=True)
 ```
 
 ### Multi-Channel Volumes
@@ -128,21 +132,20 @@ Resample a 3D, 4D, or 5D volume to a new size.
   - `'linear'`: Trilinear interpolation (float32 only)
   - `'area'`: Area-based averaging (float32 only, suited for downsampling)
   - `'cubic'`: Tricubic B-spline interpolation with IIR prefilter (float32 only). Matches `scipy.ndimage.zoom(order=3, mode='reflect')`
-- `align_corners` (bool): Only supported for `mode='linear'` and `mode='cubic'`
+- `align_corners` (bool): Supported for `mode='nearest'`, `mode='linear'`, and `mode='cubic'`
   - `False` (default): matches PyTorch `align_corners=False` for linear, and SciPy `grid_mode=True` for cubic
-  - `True`: matches PyTorch `align_corners=True` for linear, and SciPy `grid_mode=False` for cubic
-  - Passing `align_corners=True` with `nearest` or `area` raises `ValueError`
+  - `True`: matches PyTorch `align_corners=True` for linear, SciPy `grid_mode=False` for cubic, and aligns corner voxels for nearest (not supported by PyTorch)
+  - Passing `align_corners=True` with `area` raises `ValueError`
 
 **PyTorch correspondence:**
 
 | volresample | PyTorch `F.interpolate` |
 |-------------|-------------------------|
 | `mode='nearest'` | `mode='nearest-exact'` |
+| `mode='nearest', align_corners=True` | *(no PyTorch equivalent)* |
 | `mode='linear', align_corners=False` | `mode='trilinear', align_corners=False` |
 | `mode='linear', align_corners=True` | `mode='trilinear', align_corners=True` |
 | `mode='area'` | `mode='area'` |
-
-`align_corners` is intentionally limited to the modes where the reference APIs support it: linear and cubic.
 
 **SciPy correspondence:**
 

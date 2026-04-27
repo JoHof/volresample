@@ -26,8 +26,10 @@ def resample(
             - 'cubic': Cubic B-spline interpolation (float32 only).
               Matches scipy.ndimage.zoom(order=3, mode='reflect').
         align_corners: If True, corner voxels of input and output are aligned,
-            preserving values at the corners. Only supported for 'linear' and
-            'cubic' modes.
+            preserving values at the corners. Only supported for 'nearest',
+            'linear', and 'cubic' modes.
+            - For 'nearest': maps output corner indices to input corner indices;
+              not supported by PyTorch's interpolate.
             - For 'linear': matches PyTorch trilinear with align_corners=True.
             - For 'cubic': matches scipy.ndimage.zoom(order=3, mode='reflect',
               grid_mode=False).

@@ -40,6 +40,7 @@ cdef inline void _apply_thread_settings() noexcept:
 cdef object _resample_nearest_dispatch(
     object data,
     tuple size,
+    bint align_corners,
 ):
     """Dispatch nearest neighbor resampling based on input dtype."""
     cdef int in_d = data.shape[0]
@@ -77,7 +78,7 @@ cdef object _resample_nearest_dispatch(
         
         # Release GIL for parallel execution
         with nogil:
-            _resample_nearest(data_ptr_u8, output_ptr_u8, in_d, in_h, in_w, out_d, out_h, out_w, scale_d, scale_h, scale_w)
+            _resample_nearest(data_ptr_u8, output_ptr_u8, in_d, in_h, in_w, out_d, out_h, out_w, scale_d, scale_h, scale_w, align_corners)
         return output_u8
     
     elif data.dtype == np.int16:
@@ -88,7 +89,7 @@ cdef object _resample_nearest_dispatch(
         
         # Release GIL for parallel execution
         with nogil:
-            _resample_nearest(data_ptr_i16, output_ptr_i16, in_d, in_h, in_w, out_d, out_h, out_w, scale_d, scale_h, scale_w)
+            _resample_nearest(data_ptr_i16, output_ptr_i16, in_d, in_h, in_w, out_d, out_h, out_w, scale_d, scale_h, scale_w, align_corners)
         return output_i16
     
     else:  # float32
@@ -99,7 +100,7 @@ cdef object _resample_nearest_dispatch(
         
         # Release GIL for parallel execution
         with nogil:
-            _resample_nearest(data_ptr_f32, output_ptr_f32, in_d, in_h, in_w, out_d, out_h, out_w, scale_d, scale_h, scale_w)
+            _resample_nearest(data_ptr_f32, output_ptr_f32, in_d, in_h, in_w, out_d, out_h, out_w, scale_d, scale_h, scale_w, align_corners)
         return output_f32
 
 def resample(
@@ -116,8 +117,9 @@ def resample(
         size: Output size (D, H, W).
         mode: Interpolation mode - 'nearest', 'linear', 'area', or 'cubic'.
         align_corners: If True, corner voxels of input and output are aligned,
-            preserving values at the corners. Only supported for 'linear' and
-            'cubic' modes.
+            preserving values at the corners. Only supported for 'nearest',
+            'linear', and 'cubic' modes.
+            - For 'nearest': maps output corner indices to input corner indices;
             - For 'linear': matches PyTorch trilinear interpolate with
               align_corners=True.
             - For 'cubic': matches scipy.ndimage.zoom(order=3, mode='reflect',
@@ -169,9 +171,9 @@ def resample(
         )
 
     # Validate align_corners
-    if align_corners and mode not in ("linear", "cubic"):
+    if align_corners and mode not in ("nearest", "linear", "cubic"):
         raise ValueError(
-            f"align_corners=True is only supported for 'linear' and 'cubic' modes, got '{mode}'"
+            f"align_corners=True is only supported for 'nearest', 'linear', and 'cubic' modes, got '{mode}'"
         )
     
     # Apply global thread settings
@@ -290,7 +292,7 @@ cdef object _resample_channel(
     
     # Mode dispatch
     if mode == "nearest":
-        return _resample_nearest_dispatch(data, size)
+        return _resample_nearest_dispatch(data, size, align_corners)
     
     elif mode == "linear":
         # Linear always uses float32, ensure C-contiguous
