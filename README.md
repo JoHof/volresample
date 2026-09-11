@@ -161,7 +161,7 @@ Resample a 3D, 4D, or 5D volume to a new size.
 - `uint8`, `int16`: Only with `mode='nearest'`
 - `float32`: All modes (`nearest`, `linear`, `area`, `cubic`)
 
-### `grid_sample(input, grid, mode='linear', padding_mode='zeros', fill_value=0)`
+### `grid_sample(input, grid, mode='linear', padding_mode='zeros', fill_value=0, rounding_rule='bankers')`
 
 Sample input at arbitrary locations specified by a grid.
 
@@ -172,15 +172,21 @@ Sample input at arbitrary locations specified by a grid.
 - `mode` (str): `'nearest'` or `'linear'`
 - `padding_mode` (str): `'zeros'`, `'border'`, `'reflection'`, or `'constant'`
 - `fill_value` (float): Fill value for out-of-bounds samples when `padding_mode='constant'`. For integer dtypes in nearest mode, the value is clamped to the valid range. Default: `0`
+- `rounding_rule` (str): Tie-breaking rule used by `mode='nearest'`:
+  - `'bankers'` (default): round half-integer coordinates to the nearest even voxel index, matching PyTorch
+  - `'round_half_up'`: round half-integer coordinates toward the larger voxel index, matching `volresample.resample(..., mode='nearest')`
 
 **PyTorch correspondence:**
 
 | volresample | PyTorch `F.grid_sample` |
 |-------------|-------------------------|
-| `mode='nearest'` | `mode='nearest'` |
+| `mode='nearest', rounding_rule='bankers'` | `mode='nearest'` |
+| `mode='nearest', rounding_rule='round_half_up'` | *(no PyTorch equivalent)* |
 | `mode='linear'` | `mode='bilinear'` |
 
-The behavior matches PyTorch's `grid_sample` with `align_corners=False`.
+With the default `rounding_rule='bankers'`, the behavior matches PyTorch's
+`grid_sample` with `align_corners=False`. `rounding_rule` is a volresample-only
+parameter; PyTorch does not provide a configurable nearest-neighbor tie rule.
 
 **Returns:**
 - Sampled array of shape `(N, C, D_out, H_out, W_out)`
@@ -317,9 +323,6 @@ float32 and back; its prepared timing uses float32 tensors. Cubic SciPy timings
 include spline prefiltering and return float32 directly. `--threads` configures
 PyTorch and volresample; it does not configure SciPy.
 
-For Cython changes, `python -m tests.experiment` builds isolated source snapshots
-and compares them in the same process with correctness gates, repeated rounds,
-and JSON results. Run `python -m tests.experiment --help` for available commands.
 
 ### Building from Source
 

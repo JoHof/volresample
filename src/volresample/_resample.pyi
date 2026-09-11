@@ -53,6 +53,7 @@ def grid_sample(
     mode: Literal["linear", "nearest"] = "linear",
     padding_mode: Literal["zeros", "border", "reflection", "constant"] = "zeros",
     fill_value: float = 0,
+    rounding_rule: Literal["bankers", "round_half_up"] = "bankers",
 ) -> NDArray[np.float32] | NDArray[np.uint8] | NDArray[np.int16]:
     """Sample input at arbitrary locations specified by a grid.
 
@@ -75,6 +76,11 @@ def grid_sample(
         fill_value: Fill value for out-of-bounds samples when
             padding_mode is 'constant'. For integer dtypes in nearest mode,
             the value is clamped to the valid dtype range. Defaults to 0.
+        rounding_rule: Tie-breaking rule for nearest-neighbor sampling.
+            'bankers' (default) rounds half-integers to the nearest even index,
+            matching PyTorch. 'round_half_up' rounds half-integers toward the
+            larger index, matching resample(mode='nearest'). This option is not
+            supported by PyTorch.
 
     Returns:
         Sampled array of shape (N, C, D_out, H_out, W_out).
@@ -82,7 +88,9 @@ def grid_sample(
         - For linear mode: returns float32.
 
     Note:
-        The behavior matches PyTorch's grid_sample with align_corners=False.
+        With rounding_rule='bankers', the behavior matches PyTorch's
+        grid_sample with align_corners=False. PyTorch does not expose a
+        configurable nearest-neighbor rounding rule.
         Thread count is controlled globally via volresample.set_num_threads().
         Default is min(cpu_count, 4).
 

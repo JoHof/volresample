@@ -18,11 +18,10 @@ from libc.math cimport rint
 # Helper functions for coordinate transformation and padding
 # =============================================================================
 
-cdef inline int round_to_nearest(float x) noexcept nogil:
-    """Round to nearest integer using banker's rounding (ties to even).
-    
-    This matches PyTorch's std::nearbyint behavior.
-    """
+cdef inline int round_to_nearest(float x, bint round_half_up) noexcept nogil:
+    """Round to the nearest integer using the selected tie-breaking rule."""
+    if round_half_up:
+        return <int>floor(x + <float>0.5)
     return <int>rint(x)
 
 
@@ -32,7 +31,9 @@ cdef inline float unnormalize_coord(float coord, int size) noexcept nogil:
     For align_corners=False:
         pixel = ((coord + 1) / 2) * size - 0.5
     """
-    return ((coord + 1.0) * size) / 2.0 - 0.5
+    # Keep every intermediate in float32, matching PyTorch's CPU kernel at
+    # coordinates immediately adjacent to a half-integer boundary.
+    return ((coord + <float>1.0) * <float>size) / <float>2.0 - <float>0.5
 
 
 cdef inline float reflect_coord(float coord, float min_val, float max_val) noexcept nogil:
@@ -357,7 +358,8 @@ cdef void _grid_sample_nearest_zeros(
     numeric_type* output_ptr,
     int N, int C, int D_in, int H_in, int W_in,
     int D_out, int H_out, int W_out,
-    numeric_type fill_value=0
+    numeric_type fill_value=0,
+    bint round_half_up=False
 ) noexcept nogil:
     """3D nearest neighbor grid sample with constant fill padding.
     
@@ -395,10 +397,10 @@ cdef void _grid_sample_nearest_zeros(
                 iy = unnormalize_coord(grid_ptr[grid_idx + 1], H_in)
                 iz = unnormalize_coord(grid_ptr[grid_idx + 2], D_in)
 
-                # Round to nearest using banker's rounding (matches PyTorch)
-                w_idx = round_to_nearest(ix)
-                h_idx = round_to_nearest(iy)
-                d_idx = round_to_nearest(iz)
+                # Round to nearest using the requested tie-breaking rule.
+                w_idx = round_to_nearest(ix, round_half_up)
+                h_idx = round_to_nearest(iy, round_half_up)
+                d_idx = round_to_nearest(iz, round_half_up)
 
                 out_idx = n * out_stride_n + c * out_stride_c + d * out_stride_d + h * W_out + w
                 in_bounds = (d_idx >= 0 and d_idx < D_in and
@@ -416,7 +418,8 @@ cdef void _grid_sample_nearest_border(
     float* grid_ptr,
     numeric_type* output_ptr,
     int N, int C, int D_in, int H_in, int W_in,
-    int D_out, int H_out, int W_out
+    int D_out, int H_out, int W_out,
+    bint round_half_up=False
 ) noexcept nogil:
     """3D nearest neighbor grid sample with border padding.
     
@@ -455,10 +458,10 @@ cdef void _grid_sample_nearest_border(
                 iy = unnormalize_coord(grid_ptr[grid_idx + 1], H_in)
                 iz = unnormalize_coord(grid_ptr[grid_idx + 2], D_in)
 
-                # Round to nearest using banker's rounding (matches PyTorch)
-                w_idx = round_to_nearest(ix)
-                h_idx = round_to_nearest(iy)
-                d_idx = round_to_nearest(iz)
+                # Round to nearest using the requested tie-breaking rule.
+                w_idx = round_to_nearest(ix, round_half_up)
+                h_idx = round_to_nearest(iy, round_half_up)
+                d_idx = round_to_nearest(iz, round_half_up)
 
                 # Clamp to valid range
                 if w_idx < 0: w_idx = 0
@@ -477,7 +480,8 @@ cdef void _grid_sample_nearest_reflection(
     float* grid_ptr,
     numeric_type* output_ptr,
     int N, int C, int D_in, int H_in, int W_in,
-    int D_out, int H_out, int W_out
+    int D_out, int H_out, int W_out,
+    bint round_half_up=False
 ) noexcept nogil:
     """3D nearest neighbor grid sample with reflection padding.
     
@@ -513,15 +517,21 @@ cdef void _grid_sample_nearest_reflection(
                 iy = unnormalize_coord(grid_ptr[grid_idx + 1], H_in)
                 iz = unnormalize_coord(grid_ptr[grid_idx + 2], D_in)
 
-                # Round to nearest using banker's rounding (matches PyTorch)
-                w_idx = round_to_nearest(ix)
-                h_idx = round_to_nearest(iy)
-                d_idx = round_to_nearest(iz)
+                # PyTorch reflects continuous coordinates at the half-pixel
+                # image boundaries, clips them, and only then rounds.
+                ix = reflect_coord(ix, <float>-0.5, <float>W_in - <float>0.5)
+                iy = reflect_coord(iy, <float>-0.5, <float>H_in - <float>0.5)
+                iz = reflect_coord(iz, <float>-0.5, <float>D_in - <float>0.5)
+                if ix < 0: ix = 0
+                elif ix > W_in - 1: ix = W_in - 1
+                if iy < 0: iy = 0
+                elif iy > H_in - 1: iy = H_in - 1
+                if iz < 0: iz = 0
+                elif iz > D_in - 1: iz = D_in - 1
 
-                # Reflect
-                w_idx = reflect_bound(w_idx, W_in)
-                h_idx = reflect_bound(h_idx, H_in)
-                d_idx = reflect_bound(d_idx, D_in)
+                w_idx = round_to_nearest(ix, round_half_up)
+                h_idx = round_to_nearest(iy, round_half_up)
+                d_idx = round_to_nearest(iz, round_half_up)
 
                 out_idx = n * out_stride_n + c * out_stride_c + d * out_stride_d + h * W_out + w
                 output_ptr[out_idx] = input_ptr[in_base + d_idx * in_stride_d + h_idx * W_in + w_idx]

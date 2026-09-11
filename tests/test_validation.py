@@ -72,3 +72,11 @@ def test_grid_sample_rejects_batch_mismatch(mode):
     grid = rng.uniform(-1, 1, size=(2, 4, 4, 4, 3)).astype(np.float32)
     with pytest.raises(ValueError):
         volresample.grid_sample(inp, grid, mode=mode)
+
+
+def test_grid_sample_rejects_invalid_rounding_rule():
+    inp = np.ones((1, 1, 2, 2, 2), dtype=np.float32)
+    grid = np.zeros((1, 1, 1, 1, 3), dtype=np.float32)
+
+    with pytest.raises(ValueError, match="rounding_rule"):
+        volresample.grid_sample(inp, grid, mode="nearest", rounding_rule="invalid")
