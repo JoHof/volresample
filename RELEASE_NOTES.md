@@ -4,6 +4,11 @@ Notable changes in volresample are summarized here by release.
 
 The canonical published artifacts are attached to GitHub Releases and published on PyPI.
 
+## 0.5.1
+
+- Faster cubic interpolation and linear resampling for shallow or tiny volumes.
+- Improved code structure.
+
 ## 0.5.0
 
 - Add `align_corners=True` support for nearest neighbor interpolation.
