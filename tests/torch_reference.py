@@ -99,7 +99,9 @@ class TorchReference:
         # For 5D, data_t is already in the correct shape (N,C,D,H,W)
 
         # For uint8 nearest neighbor, keep in uint8 (nearest-exact supports it directly)
-        # For other cases, convert to float32 for numerical stability
+        # int16 needs conversion because PyTorch interpolation lacks native support.
+        # Already-float32 inputs reuse their storage. These conversions intentionally
+        # remain inside this NumPy-to-NumPy reference's end-to-end timing.
         if not (torch_orig_dtype == torch.uint8 and mode == "nearest"):
             data_t = data_t.to(dtype=torch.float32)
 

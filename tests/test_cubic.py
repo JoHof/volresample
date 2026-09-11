@@ -11,6 +11,34 @@ from conftest import ATOL_CUBIC, SCIPY_AVAILABLE, requires_scipy, scipy_cubic
 
 import volresample
 
+
+@requires_scipy
+@pytest.mark.parametrize("align_corners", [False, True])
+@pytest.mark.parametrize(
+    "shape,size",
+    [
+        ((3, 41, 67), (1, 47, 91)),  # Shallow output and odd-width worker scratch.
+        ((5, 7, 48), (9, 11, 16)),  # Boundary of the two evaluation strategies.
+        ((5, 7, 49), (9, 11, 16)),
+        ((9, 11, 257), (13, 7, 8)),  # Strong reduction along the contiguous axis.
+    ],
+)
+def test_cubic_anisotropic_evaluation(shape, size, align_corners):
+    data = np.random.default_rng(92).standard_normal(shape).astype(np.float32)
+    expected = scipy_cubic(data, size, align_corners=align_corners)
+    previous = volresample.get_num_threads()
+    try:
+        outputs = []
+        for threads in (1, 4):
+            volresample.set_num_threads(threads)
+            actual = volresample.resample(data, size, mode="cubic", align_corners=align_corners)
+            np.testing.assert_allclose(actual, expected, atol=ATOL_CUBIC, rtol=1e-5)
+            outputs.append(actual)
+        np.testing.assert_array_equal(*outputs)
+    finally:
+        volresample.set_num_threads(previous)
+
+
 # ============================================================================
 # Basic smoke tests
 # ============================================================================
@@ -70,9 +98,9 @@ def test_cubic_vs_scipy(input_shape, output_size):
     out = volresample.resample(data, output_size, mode="cubic")
     ref = scipy_cubic(data, output_size)
     assert out.shape == ref.shape
-    assert np.allclose(
-        out, ref, atol=ATOL_CUBIC
-    ), f"max_err={np.max(np.abs(out.astype(np.float64) - ref.astype(np.float64))):.2e}"
+    assert np.allclose(out, ref, atol=ATOL_CUBIC), (
+        f"max_err={np.max(np.abs(out.astype(np.float64) - ref.astype(np.float64))):.2e}"
+    )
 
 
 # ============================================================================
@@ -194,9 +222,9 @@ def test_cubic_align_corners_vs_scipy(input_shape, output_size):
     out = volresample.resample(data, output_size, mode="cubic", align_corners=True)
     ref = scipy_cubic(data, output_size, align_corners=True)
     assert out.shape == ref.shape
-    assert np.allclose(
-        out, ref, atol=ATOL_CUBIC
-    ), f"max_err={np.max(np.abs(out.astype(np.float64) - ref.astype(np.float64))):.2e}"
+    assert np.allclose(out, ref, atol=ATOL_CUBIC), (
+        f"max_err={np.max(np.abs(out.astype(np.float64) - ref.astype(np.float64))):.2e}"
+    )
 
 
 def test_cubic_align_corners_identity():

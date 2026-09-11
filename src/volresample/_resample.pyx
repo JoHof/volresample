@@ -15,14 +15,13 @@ from libc.stdlib cimport malloc, free
 from volresample._config import get_num_threads
 
 cdef extern from "omp.h":
-    int omp_set_num_threads(int)
+    void omp_set_num_threads(int)
     int omp_get_thread_num() noexcept nogil
     int omp_get_max_threads() noexcept nogil
 
 cnp.import_array()
 
 # Include the implementation files directly
-include "cython_src/utils.pyx"
 include "cython_src/nearest.pyx"
 include "cython_src/linear.pyx"
 include "cython_src/area.pyx"
@@ -146,7 +145,6 @@ def resample(
     cdef int ndim
     cdef int n_batch, n_channels
     cdef cnp.ndarray data_np
-    cdef cnp.ndarray output
     cdef cnp.ndarray channel_output
     cdef int b, c
     cdef list batch_outputs, channel_outputs
@@ -186,36 +184,34 @@ def resample(
     if ndim not in (3, 4, 5):
         raise ValueError(f"Data must be 3D, 4D, or 5D, got {ndim}D")
     
-    # Handle 5D: iterate over batch and channels
+    # Share coordinate tables and one output allocation across all channels.
+    if mode == "linear" and ndim > 3:
+        mc_total_ch = data_np.shape[0]
+        if ndim == 5:
+            mc_total_ch *= data_np.shape[1]
+        data_f32_mc = np.ascontiguousarray(data_np, dtype=np.float32)
+        mc_in_d = data_f32_mc.shape[ndim - 3]
+        mc_in_h = data_f32_mc.shape[ndim - 2]
+        mc_in_w = data_f32_mc.shape[ndim - 1]
+        mc_out_d, mc_out_h, mc_out_w = size
+        output_mc = np.empty((<object>data_np).shape[:-3] + size, dtype=np.float32)
+        mc_data_ptr = <float*>cnp.PyArray_DATA(data_f32_mc)
+        mc_out_ptr = <float*>cnp.PyArray_DATA(output_mc)
+        mc_scale_d = <float>mc_in_d / <float>mc_out_d
+        mc_scale_h = <float>mc_in_h / <float>mc_out_h
+        mc_scale_w = <float>mc_in_w / <float>mc_out_w
+        with nogil:
+            _resample_linear_multi(
+                mc_data_ptr, mc_out_ptr, mc_total_ch,
+                mc_in_d, mc_in_h, mc_in_w,
+                mc_out_d, mc_out_h, mc_out_w,
+                mc_scale_d, mc_scale_h, mc_scale_w, align_corners
+            )
+        return output_mc
+
     if ndim == 5:
         n_batch = data_np.shape[0]
         n_channels = data_np.shape[1]
-
-        # Fast multi-channel path for linear: process all N*C channels at once
-        if mode == "linear":
-            mc_total_ch = n_batch * n_channels
-            data_f32_mc = np.ascontiguousarray(data_np, dtype=np.float32)
-            mc_in_d = data_f32_mc.shape[2]
-            mc_in_h = data_f32_mc.shape[3]
-            mc_in_w = data_f32_mc.shape[4]
-            mc_out_d = size[0]
-            mc_out_h = size[1]
-            mc_out_w = size[2]
-            output_mc = np.empty((n_batch, n_channels, mc_out_d, mc_out_h, mc_out_w), dtype=np.float32)
-            mc_data_ptr = <float*>cnp.PyArray_DATA(data_f32_mc)
-            mc_out_ptr = <float*>cnp.PyArray_DATA(output_mc)
-            mc_scale_d = <float>mc_in_d / <float>mc_out_d
-            mc_scale_h = <float>mc_in_h / <float>mc_out_h
-            mc_scale_w = <float>mc_in_w / <float>mc_out_w
-            with nogil:
-                _resample_linear_multi(
-                    mc_data_ptr, mc_out_ptr, mc_total_ch,
-                    mc_in_d, mc_in_h, mc_in_w,
-                    mc_out_d, mc_out_h, mc_out_w,
-                    mc_scale_d, mc_scale_h, mc_scale_w, align_corners
-                )
-            return output_mc
-
         batch_outputs = []
         
         for b in range(n_batch):
@@ -230,30 +226,6 @@ def resample(
     # Handle 4D: iterate over channels
     elif ndim == 4:
         n_channels = data_np.shape[0]
-
-        # Fast multi-channel path for linear
-        if mode == "linear":
-            data_f32_mc = np.ascontiguousarray(data_np, dtype=np.float32)
-            mc_in_d = data_f32_mc.shape[1]
-            mc_in_h = data_f32_mc.shape[2]
-            mc_in_w = data_f32_mc.shape[3]
-            mc_out_d = size[0]
-            mc_out_h = size[1]
-            mc_out_w = size[2]
-            output_mc = np.empty((n_channels, mc_out_d, mc_out_h, mc_out_w), dtype=np.float32)
-            mc_data_ptr = <float*>cnp.PyArray_DATA(data_f32_mc)
-            mc_out_ptr = <float*>cnp.PyArray_DATA(output_mc)
-            mc_scale_d = <float>mc_in_d / <float>mc_out_d
-            mc_scale_h = <float>mc_in_h / <float>mc_out_h
-            mc_scale_w = <float>mc_in_w / <float>mc_out_w
-            with nogil:
-                _resample_linear_multi(
-                    mc_data_ptr, mc_out_ptr, n_channels,
-                    mc_in_d, mc_in_h, mc_in_w,
-                    mc_out_d, mc_out_h, mc_out_w,
-                    mc_scale_d, mc_scale_h, mc_scale_w, align_corners
-                )
-            return output_mc
 
         channel_outputs = []
         
@@ -303,7 +275,7 @@ cdef object _resample_channel(
         
         # Release GIL for parallel execution
         with nogil:
-            _resample_linear(data_ptr, output_ptr, in_d, in_h, in_w, out_d, out_h, out_w, scale_d, scale_h, scale_w, align_corners)
+            _resample_linear_multi(data_ptr, output_ptr, 1, in_d, in_h, in_w, out_d, out_h, out_w, scale_d, scale_h, scale_w, align_corners)
         return output
     
     elif mode == "area":

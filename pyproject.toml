@@ -7,6 +7,7 @@ requires-python = ">=3.9"
 dependencies = [
     "numpy>=2.0.0",
 ]
+
 authors = [
     {name = "Johannes", email = "j.hofmanninger@gmail.com"}
 ]
@@ -25,6 +26,18 @@ classifiers = [
     "Programming Language :: Cython",
     "Topic :: Scientific/Engineering",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
+
+[project.optional-dependencies]
+# Select exactly one PyTorch build when syncing (for example, `uv sync --extra cuda`).
+cpu = ["torch>=2.8.0"]
+cuda = [
+    "torch>=2.8.0; python_version >= '3.10' and (sys_platform == 'linux' or sys_platform == 'win32')",
+]
+rocm = [
+    "torch>=2.14.0; sys_platform == 'linux' and python_version >= '3.10'",
+    "torchvision; sys_platform == 'linux' and python_version >= '3.10'",
+    "rocm>=7.14,<7.15; sys_platform == 'linux' and python_version >= '3.10'",
 ]
 
 [project.urls]
@@ -107,31 +120,57 @@ archs = ["AMD64"]
 # Note: OpenMP may require special handling on Windows
 # You might need to skip OpenMP or use different flags
 
-[[tool.uv.index]]
-name = "pytorch-cu126"
-url = "https://download.pytorch.org/whl/cu126"
-explicit = true
+[tool.uv]
+index-strategy = "unsafe-best-match"
+conflicts = [
+    [
+        { extra = "cpu" },
+        { extra = "cuda" },
+        { extra = "rocm" },
+    ],
+]
 
 [tool.uv.sources]
 torch = [
-  { index = "pytorch-cu126", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu130", extra = "cuda" },
+    { index = "pytorch-rocm", extra = "rocm" },
 ]
+torchvision = { index = "pytorch-rocm", extra = "rocm" }
+rocm = { index = "pytorch-rocm", extra = "rocm" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-rocm"
+url = "https://download.pytorch.org/whl/rocm7.14"
+# PyTorch 2.14 splits the ROCm runtime into packages served by this index.
+# Keep it available for transitive dependencies, like `--index-url` does.
+explicit = false
 
 [dependency-groups]
 dev = [
-    "cibuildwheel>=3.2.1; python_version >= '3.11'",
-    "torch>=2.8.0",
-    "pytest>=7.0.0",
-    "pytest-cov>=3.0.0",
-    "black>=22.0.0",
-    "isort>=5.13.0",
-    "ruff>=0.8.0",
-    "mypy>=0.950",
-    "bandit>=1.7.0",
-    "pre-commit>=3.0.0",
-    "cython>=3.0.0",
-    "ipywidgets>=8.1.7",
-    "scipy>=1.13.1",
+    "cibuildwheel; python_version >= '3.13'",
+    "pytest",
+    "pytest-cov",
+    "black",
+    "isort",
+    "ruff",
+    "mypy",
+    "bandit",
+    "pre-commit",
+    "cython",
+    "ipywidgets",
+    "scipy",
+    "torch",
 ]
 
 [tool.setuptools]
