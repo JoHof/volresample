@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Unified benchmark suite for volresample.
 
-Default profile aims for a useful 30-60 second run on a typical laptop CPU.
+Profiles set the measured time per callable; warmup and validation add to runtime.
 
 Covers:
 - resample() vs PyTorch for nearest, linear, and area
@@ -18,6 +18,7 @@ import statistics
 import sys
 import time
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any, Callable
 
@@ -42,9 +43,9 @@ except ImportError:
     zoom = None
 
 
-WARMUP_RUNS = 1
-MIN_RUNS = 1
-MAX_RUNS = 250
+WARMUP_RUNS = 3
+MIN_BLOCKS = 6
+MAX_BLOCK_MS = 50.0
 LINE_WIDTH = 122
 
 PROFILE_TARGET_MS = {
@@ -80,10 +81,12 @@ class GridSampleCase:
 
 @dataclass
 class Measurement:
-    mean_ms: float
-    std_ms: float
+    median_ms: float
+    iqr_ms: float
     runs: int
-    output: np.ndarray
+    output: Any
+    blocks: int
+    elapsed_ms: float
 
 
 @dataclass
@@ -93,12 +96,14 @@ class ComparisonRow:
     shape: str
     reference_name: str
     reference_ms: float | None
-    reference_std_ms: float | None
+    reference_iqr_ms: float | None
     volresample_ms: float
-    volresample_std_ms: float
+    volresample_iqr_ms: float
     speedup: float | None
     max_error: float | None
     runs: str
+    prepared: Measurement | None = None
+    prepared_dtype: str | None = None
 
 
 def product(shape: tuple[int, ...]) -> int:
@@ -167,37 +172,111 @@ def scipy_cubic_reference(
 ) -> np.ndarray:
     factors = tuple(out_dim / in_dim for out_dim, in_dim in zip(output_size, data.shape[-3:]))
     return zoom(
-        data.astype(np.float64),
+        data,
         factors,
         order=3,
         mode="reflect",
         grid_mode=not align_corners,
-    ).astype(np.float32)
+        output=np.float32,
+    )
 
 
-def time_callable(fn: Callable[[], np.ndarray], target_ms: float) -> Measurement:
-    for _ in range(WARMUP_RUNS):
-        fn()
+def time_callables(
+    functions: dict[str, Callable[[], Any]], target_ms: float
+) -> dict[str, Measurement]:
+    """Time CPU callables in rotating blocks, excluding warmup and validation.
 
-    start = time.perf_counter()
-    output = fn()
-    sample_ms = (time.perf_counter() - start) * 1000.0
+    Each callable receives at least MIN_BLOCKS blocks and target_ms of measured
+    time. Statistics describe per-call averages within blocks. Output allocation
+    and disposal are included equally for every backend; outputs for validation
+    are collected separately after timing.
+    """
+    if not math.isfinite(target_ms) or target_ms <= 0:
+        raise ValueError("target_ms must be finite and positive")
 
-    if sample_ms <= 0.0:
-        runs = MAX_RUNS
-    else:
-        runs = int(round(target_ms / sample_ms))
-    runs = max(MIN_RUNS, min(MAX_RUNS, runs))
+    repeats = {}
+    block_target_ms = min(target_ms / MIN_BLOCKS, MAX_BLOCK_MS)
+    for name, fn in functions.items():
+        warmup_times = []
+        for _ in range(WARMUP_RUNS):
+            start = time.perf_counter()
+            fn()
+            warmup_times.append((time.perf_counter() - start) * 1000.0)
+        sample_ms = max(statistics.median(warmup_times), 0.001)
+        repeats[name] = max(1, math.ceil(block_target_ms / sample_ms))
 
-    times = [sample_ms]
-    for _ in range(runs - 1):
-        start = time.perf_counter()
-        output = fn()
-        times.append((time.perf_counter() - start) * 1000.0)
+    samples: dict[str, list[float]] = {name: [] for name in functions}
+    elapsed = dict.fromkeys(functions, 0.0)
+    runs = dict.fromkeys(functions, 0)
+    names = list(functions)
+    round_index = 0
+    while names:
+        offset = round_index % len(names)
+        for name in names[offset:] + names[:offset]:
+            if len(samples[name]) >= MIN_BLOCKS and elapsed[name] >= target_ms:
+                continue
+            fn = functions[name]
+            count = repeats[name]
+            start = time.perf_counter()
+            for _ in range(count):
+                fn()
+            duration_ms = (time.perf_counter() - start) * 1000.0
+            samples[name].append(duration_ms / count)
+            elapsed[name] += duration_ms
+            runs[name] += count
+        round_index += 1
+        if all(len(samples[name]) >= MIN_BLOCKS and elapsed[name] >= target_ms for name in names):
+            break
 
-    mean_ms = statistics.fmean(times)
-    std_ms = statistics.pstdev(times) if len(times) > 1 else 0.0
-    return Measurement(mean_ms=mean_ms, std_ms=std_ms, runs=runs, output=output)
+    measurements = {}
+    for name, fn in functions.items():
+        q1, _, q3 = statistics.quantiles(samples[name], n=4, method="inclusive")
+        measurements[name] = Measurement(
+            median_ms=statistics.median(samples[name]),
+            iqr_ms=q3 - q1,
+            runs=runs[name],
+            output=fn(),
+            blocks=len(samples[name]),
+            elapsed_ms=elapsed[name],
+        )
+    return measurements
+
+
+def prepare_torch_resample(data: np.ndarray, case: ResampleCase) -> Callable[[], Any]:
+    """Prepare shape/dtype once; the timed call returns a native 5D tensor."""
+    tensor = torch.from_numpy(data).reshape((1,) * (5 - data.ndim) + data.shape)
+    if not (data.dtype == np.uint8 and case.mode == "nearest"):
+        tensor = tensor.float()
+    mode = {"nearest": "nearest-exact", "linear": "trilinear", "area": "area"}[case.mode]
+    kwargs = {"align_corners": case.align_corners} if mode == "trilinear" else {}
+    return partial(
+        torch.nn.functional.interpolate, tensor, size=case.output_size, mode=mode, **kwargs
+    )
+
+
+def prepare_torch_grid_sample(
+    data: np.ndarray, grid: np.ndarray, case: GridSampleCase
+) -> Callable[[], Any]:
+    """Prepare both CPU tensors once, outside the measured region."""
+    return partial(
+        torch.nn.functional.grid_sample,
+        torch.from_numpy(data).float(),
+        torch.from_numpy(grid).float(),
+        mode="bilinear" if case.mode == "linear" else case.mode,
+        padding_mode=case.padding_mode,
+        align_corners=False,
+    )
+
+
+def check_prepared_output(prepared: Measurement, reference: Measurement) -> str:
+    """Restore the public output contract only for validation, outside timing."""
+    output = prepared.output.detach().cpu().numpy()
+    dtype = output.dtype.name
+    output = output.reshape(reference.output.shape).astype(reference.output.dtype, copy=False)
+    np.testing.assert_array_equal(output, reference.output)
+    # Rows retain timing statistics, not an extra output volume per benchmark case.
+    prepared.output = None
+    return dtype
 
 
 def max_abs_error(reference_output: np.ndarray, candidate_output: np.ndarray) -> float:
@@ -206,10 +285,10 @@ def max_abs_error(reference_output: np.ndarray, candidate_output: np.ndarray) ->
     )
 
 
-def format_time(mean_ms: float | None, std_ms: float | None) -> str:
-    if mean_ms is None or std_ms is None:
+def format_time(median_ms: float | None, iqr_ms: float | None) -> str:
+    if median_ms is None or iqr_ms is None:
         return "n/a"
-    return f"{mean_ms:8.2f} +- {std_ms:5.2f}"
+    return f"{median_ms:8.2f} / {iqr_ms:5.2f}"
 
 
 def format_speedup(speedup: float | None) -> str:
@@ -251,15 +330,23 @@ def print_header(title: str, subtitle: str | None = None) -> None:
 
 def print_environment(profile: str, target_ms: float, threads: int) -> None:
     live_print(f"Profile          : {profile} ({target_ms:.0f} ms target per backend)")
-    live_print(f"Warmup           : {WARMUP_RUNS} run")
-    live_print(f"Adaptive repeats : {MIN_RUNS}-{MAX_RUNS} runs")
+    live_print(f"Warmup           : {WARMUP_RUNS} runs per callable")
+    live_print(f"Measurement      : at least {MIN_BLOCKS} blocks, rotating backend order")
     live_print(f"Threads          : {threads}")
     live_print(f"Python           : {platform.python_version()}")
     live_print(f"NumPy            : {np.__version__}")
     live_print(f"PyTorch          : {'available' if TorchReference.available else 'missing'}")
     live_print(f"SciPy            : {'available' if zoom is not None else 'missing'}")
     live_print()
+    live_print("Main tables: end-to-end CPU calls, NumPy input -> NumPy output.")
+    live_print("Times are median / IQR (ms) of per-call block averages; speedups use medians.")
     live_print("Speedup is reference_time / volresample_time. Values above 1.0x favor volresample.")
+    live_print("Prepared PyTorch timings exclude input wrapping/casts and output conversion.")
+    live_print("They include F.interpolate/F.grid_sample dispatch and output allocation.")
+    live_print(
+        "int16 nearest: end-to-end includes int16 -> float32 -> int16; prepared uses float32."
+    )
+    live_print("Configured threads apply to PyTorch and volresample; SciPy is not configured here.")
     live_print("Error is max absolute difference between outputs.")
 
 
@@ -280,17 +367,21 @@ def print_progress_done(
     candidate: Measurement,
     speedup: float | None,
     error: float,
+    prepared: Measurement | None = None,
 ) -> None:
     speedup_text = format_speedup(speedup)
     live_print(
-        f"  done: {reference_name} {reference.mean_ms:.2f} ms | "
-        f"volresample {candidate.mean_ms:.2f} ms | {speedup_text} | err {error:.2e}"
+        f"  done: {reference_name} {reference.median_ms:.2f} ms | "
+        f"volresample {candidate.median_ms:.2f} ms | {speedup_text} | err {error:.2e}"
     )
+
+    if prepared is not None:
+        live_print(f"  prepared PyTorch: {prepared.median_ms:.3f} ms (supplemental timing)")
 
 
 def print_table(title: str, rows: list[ComparisonRow]) -> None:
     live_print()
-    live_print(title)
+    live_print(f"{title} — end-to-end NumPy; median / IQR in ms")
     print_rule("-")
     live_print(
         f"{'Case':<20} {'Config':<18} {'Shape':<31} {'Reference (ms)':>17} "
@@ -301,10 +392,22 @@ def print_table(title: str, rows: list[ComparisonRow]) -> None:
     for row in rows:
         live_print(
             f"{row.case:<20} {row.config:<18} {row.shape:<31} "
-            f"{format_time(row.reference_ms, row.reference_std_ms):>17} "
-            f"{format_time(row.volresample_ms, row.volresample_std_ms):>18} "
+            f"{format_time(row.reference_ms, row.reference_iqr_ms):>17} "
+            f"{format_time(row.volresample_ms, row.volresample_iqr_ms):>18} "
             f"{format_speedup(row.speedup):>8} {format_error(row.max_error):>11} {row.runs:>9}"
         )
+
+    prepared_rows = [row for row in rows if row.prepared is not None]
+    if prepared_rows:
+        live_print()
+        live_print("Prepared PyTorch CPU calls — supplemental; excluded from speedup summaries")
+        live_print(f"{'Case':<22} {'Tensor dtype':<14} {'Median / IQR (ms)':>18} {'Runs':>9}")
+        for row in prepared_rows:
+            measurement = row.prepared
+            live_print(
+                f"{row.case:<22} {row.prepared_dtype:<14} "
+                f"{format_time(measurement.median_ms, measurement.iqr_ms):>18} {measurement.runs:>9}"
+            )
 
 
 def summarize_section(title: str, rows: list[ComparisonRow]) -> None:
@@ -381,8 +484,18 @@ def benchmark_resample_against_torch(
         shape = resample_shape_text(case.input_shape, case.output_size)
 
         print_progress_start("resample", index, len(cases), case.label, config, shape)
-        reference = time_callable(run_reference, target_ms)
-        candidate = time_callable(run_volresample, target_ms)
+        measurements = time_callables(
+            {
+                "reference": run_reference,
+                "volresample": run_volresample,
+                "prepared": prepare_torch_resample(data, case),
+            },
+            target_ms,
+        )
+        reference = measurements["reference"]
+        candidate = measurements["volresample"]
+        prepared = measurements["prepared"]
+        prepared_dtype = check_prepared_output(prepared, reference)
         error = max_abs_error(reference.output, candidate.output)
 
         rows.append(
@@ -391,21 +504,26 @@ def benchmark_resample_against_torch(
                 config=config,
                 shape=shape,
                 reference_name="PyTorch",
-                reference_ms=reference.mean_ms,
-                reference_std_ms=reference.std_ms,
-                volresample_ms=candidate.mean_ms,
-                volresample_std_ms=candidate.std_ms,
-                speedup=reference.mean_ms / candidate.mean_ms if candidate.mean_ms > 0 else None,
+                reference_ms=reference.median_ms,
+                reference_iqr_ms=reference.iqr_ms,
+                volresample_ms=candidate.median_ms,
+                volresample_iqr_ms=candidate.iqr_ms,
+                speedup=reference.median_ms / candidate.median_ms
+                if candidate.median_ms > 0
+                else None,
                 max_error=error,
                 runs=f"{reference.runs}/{candidate.runs}",
+                prepared=prepared,
+                prepared_dtype=prepared_dtype,
             )
         )
         print_progress_done(
             "PyTorch",
             reference,
             candidate,
-            reference.mean_ms / candidate.mean_ms if candidate.mean_ms > 0 else None,
+            reference.median_ms / candidate.median_ms if candidate.median_ms > 0 else None,
             error,
+            prepared,
         )
 
     return rows
@@ -452,8 +570,11 @@ def benchmark_cubic_against_scipy(
         shape = resample_shape_text(case.input_shape, case.output_size)
 
         print_progress_start("cubic", index, len(cases), case.label, config, shape)
-        reference = time_callable(run_reference, target_ms)
-        candidate = time_callable(run_volresample, target_ms)
+        measurements = time_callables(
+            {"reference": run_reference, "volresample": run_volresample}, target_ms
+        )
+        reference = measurements["reference"]
+        candidate = measurements["volresample"]
         error = max_abs_error(reference.output, candidate.output)
 
         rows.append(
@@ -462,11 +583,13 @@ def benchmark_cubic_against_scipy(
                 config=config,
                 shape=shape,
                 reference_name="SciPy",
-                reference_ms=reference.mean_ms,
-                reference_std_ms=reference.std_ms,
-                volresample_ms=candidate.mean_ms,
-                volresample_std_ms=candidate.std_ms,
-                speedup=reference.mean_ms / candidate.mean_ms if candidate.mean_ms > 0 else None,
+                reference_ms=reference.median_ms,
+                reference_iqr_ms=reference.iqr_ms,
+                volresample_ms=candidate.median_ms,
+                volresample_iqr_ms=candidate.iqr_ms,
+                speedup=reference.median_ms / candidate.median_ms
+                if candidate.median_ms > 0
+                else None,
                 max_error=error,
                 runs=f"{reference.runs}/{candidate.runs}",
             )
@@ -475,7 +598,7 @@ def benchmark_cubic_against_scipy(
             "SciPy",
             reference,
             candidate,
-            reference.mean_ms / candidate.mean_ms if candidate.mean_ms > 0 else None,
+            reference.median_ms / candidate.median_ms if candidate.median_ms > 0 else None,
             error,
         )
 
@@ -526,8 +649,18 @@ def benchmark_grid_sample_against_torch(
         shape = grid_shape_text(case.input_shape, case.grid_shape)
 
         print_progress_start("grid", index, len(cases), case.label, config, shape)
-        reference = time_callable(run_reference, target_ms)
-        candidate = time_callable(run_volresample, target_ms)
+        measurements = time_callables(
+            {
+                "reference": run_reference,
+                "volresample": run_volresample,
+                "prepared": prepare_torch_grid_sample(input_data, grid, case),
+            },
+            target_ms,
+        )
+        reference = measurements["reference"]
+        candidate = measurements["volresample"]
+        prepared = measurements["prepared"]
+        prepared_dtype = check_prepared_output(prepared, reference)
         error = max_abs_error(reference.output, candidate.output)
 
         rows.append(
@@ -536,21 +669,26 @@ def benchmark_grid_sample_against_torch(
                 config=config,
                 shape=shape,
                 reference_name="PyTorch",
-                reference_ms=reference.mean_ms,
-                reference_std_ms=reference.std_ms,
-                volresample_ms=candidate.mean_ms,
-                volresample_std_ms=candidate.std_ms,
-                speedup=reference.mean_ms / candidate.mean_ms if candidate.mean_ms > 0 else None,
+                reference_ms=reference.median_ms,
+                reference_iqr_ms=reference.iqr_ms,
+                volresample_ms=candidate.median_ms,
+                volresample_iqr_ms=candidate.iqr_ms,
+                speedup=reference.median_ms / candidate.median_ms
+                if candidate.median_ms > 0
+                else None,
                 max_error=error,
                 runs=f"{reference.runs}/{candidate.runs}",
+                prepared=prepared,
+                prepared_dtype=prepared_dtype,
             )
         )
         print_progress_done(
             "PyTorch",
             reference,
             candidate,
-            reference.mean_ms / candidate.mean_ms if candidate.mean_ms > 0 else None,
+            reference.median_ms / candidate.median_ms if candidate.median_ms > 0 else None,
             error,
+            prepared,
         )
 
     return rows
@@ -628,7 +766,7 @@ def parse_args() -> argparse.Namespace:
         "--profile",
         choices=tuple(PROFILE_TARGET_MS),
         default="default",
-        help="Benchmark profile. 'default' is curated for roughly 30-60 seconds.",
+        help="Measured time per callable; warmup and validation add to total runtime.",
     )
     parser.add_argument(
         "--target-ms",
@@ -636,7 +774,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Override target milliseconds per backend measurement.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.target_ms is not None and (not math.isfinite(args.target_ms) or args.target_ms <= 0):
+        parser.error("--target-ms must be finite and positive")
+    if args.threads < 0:
+        parser.error("--threads must be nonnegative")
+    return args
 
 
 def configure_threads(requested_threads: int) -> int:
