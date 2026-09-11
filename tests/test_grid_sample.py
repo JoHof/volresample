@@ -92,6 +92,97 @@ def test_grid_sample_3d_modes():
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
+@pytest.mark.parametrize("padding_mode", ["zeros", "border", "reflection"])
+def test_nearest_bankers_exact_half_ties_match_torch(padding_mode):
+    """Exact half-integer coordinates use PyTorch's ties-to-even rule."""
+    input_data = (10 + np.arange(4, dtype=np.float32)).reshape(1, 1, 1, 1, 4)
+    source_x = np.array([-1.5, -0.5, 0.5, 1.5, 2.5, 3.5, 4.5], dtype=np.float32)
+    normalized_x = (2 * (source_x + np.float32(0.5)) / 4 - 1).astype(np.float32)
+    grid = np.zeros((1, 1, 1, len(source_x), 3), dtype=np.float32)
+    grid[..., 0] = normalized_x
+
+    expected = F.grid_sample(
+        torch.from_numpy(input_data),
+        torch.from_numpy(grid),
+        mode="nearest",
+        padding_mode=padding_mode,
+        align_corners=False,
+    ).numpy()
+    result = volresample.grid_sample(
+        input_data,
+        grid,
+        mode="nearest",
+        padding_mode=padding_mode,
+        rounding_rule="bankers",
+    )
+
+    np.testing.assert_array_equal(result, expected)
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
+def test_nearest_bankers_float32_values_adjacent_to_half_match_torch():
+    """Float32 grid values on either side of a tie follow PyTorch exactly."""
+    input_data = (10 + np.arange(4, dtype=np.float32)).reshape(1, 1, 1, 1, 4)
+    tie = np.float32(-0.5)
+    normalized_x = np.array(
+        [
+            np.nextafter(tie, np.float32(-np.inf)),
+            tie,
+            np.nextafter(tie, np.float32(np.inf)),
+        ],
+        dtype=np.float32,
+    )
+    grid = np.zeros((1, 1, 1, len(normalized_x), 3), dtype=np.float32)
+    grid[..., 0] = normalized_x
+
+    expected = F.grid_sample(
+        torch.from_numpy(input_data),
+        torch.from_numpy(grid),
+        mode="nearest",
+        padding_mode="border",
+        align_corners=False,
+    ).numpy()
+    result = volresample.grid_sample(input_data, grid, mode="nearest", padding_mode="border")
+
+    np.testing.assert_array_equal(result, expected)
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.uint8, np.int16])
+def test_nearest_round_half_up_matches_resample_at_half_ties(dtype):
+    """round_half_up gives grid_sample the same tie behavior as resample."""
+    volume = np.arange(4 * 4 * 4, dtype=dtype).reshape(4, 4, 4)
+    centers = np.array([-0.5, 0.5], dtype=np.float32)
+    zz, yy, xx = np.meshgrid(centers, centers, centers, indexing="ij")
+    grid = np.stack([xx, yy, zz], axis=-1)[None]
+
+    expected = volresample.resample(volume, (2, 2, 2), mode="nearest")
+    result = volresample.grid_sample(
+        volume[None, None],
+        grid,
+        mode="nearest",
+        padding_mode="border",
+        rounding_rule="round_half_up",
+    )[0, 0]
+
+    np.testing.assert_array_equal(result, expected)
+
+
+def test_nearest_rounding_rules_choose_different_sides_of_half_tie():
+    """The two supported rules differ predictably at an even-index tie."""
+    input_data = np.arange(4, dtype=np.float32).reshape(1, 1, 1, 1, 4)
+    grid = np.zeros((1, 1, 1, 1, 3), dtype=np.float32)
+    grid[..., 0] = -0.5  # Source x = 0.5 for a four-voxel input.
+
+    bankers = volresample.grid_sample(input_data, grid, mode="nearest", rounding_rule="bankers")
+    half_up = volresample.grid_sample(
+        input_data, grid, mode="nearest", rounding_rule="round_half_up"
+    )
+
+    assert bankers.item() == 0
+    assert half_up.item() == 1
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
 @pytest.mark.parametrize("mode", ["linear", "nearest"])
 @pytest.mark.parametrize("padding_mode", ["zeros", "border", "reflection"])
 def test_3d_torch_match_identity_grid(mode, padding_mode):
@@ -114,9 +205,9 @@ def test_3d_torch_match_identity_grid(mode, padding_mode):
     cython_output = volresample.grid_sample(input_data, grid, mode=mode, padding_mode=padding_mode)
 
     max_diff = np.max(np.abs(torch_output - cython_output))
-    assert (
-        max_diff < TOLERANCE
-    ), f"3D identity grid, mode={mode}, padding={padding_mode}: max diff {max_diff:.6e}"
+    assert max_diff < TOLERANCE, (
+        f"3D identity grid, mode={mode}, padding={padding_mode}: max diff {max_diff:.6e}"
+    )
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
@@ -140,9 +231,9 @@ def test_3d_torch_match_random_grid(mode, padding_mode):
     cython_output = volresample.grid_sample(input_data, grid, mode=mode, padding_mode=padding_mode)
 
     max_diff = np.max(np.abs(torch_output - cython_output))
-    assert (
-        max_diff < TOLERANCE
-    ), f"3D random grid, mode={mode}, padding={padding_mode}: max diff {max_diff:.6e}"
+    assert max_diff < TOLERANCE, (
+        f"3D random grid, mode={mode}, padding={padding_mode}: max diff {max_diff:.6e}"
+    )
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
@@ -223,9 +314,9 @@ def test_3d_torch_match_extreme_out_of_bounds(mode, padding_mode):
     cython_output = volresample.grid_sample(input_data, grid, mode=mode, padding_mode=padding_mode)
 
     max_diff = np.max(np.abs(torch_output - cython_output))
-    assert (
-        max_diff < TOLERANCE
-    ), f"3D extreme OOB, mode={mode}, padding={padding_mode}: max diff {max_diff:.6e}"
+    assert max_diff < TOLERANCE, (
+        f"3D extreme OOB, mode={mode}, padding={padding_mode}: max diff {max_diff:.6e}"
+    )
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")

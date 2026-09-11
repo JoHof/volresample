@@ -322,6 +322,7 @@ def grid_sample(
     str mode="linear",
     str padding_mode="zeros",
     fill_value=0,
+    str rounding_rule="bankers",
 ):
     """Sample input using a sampling grid (similar to PyTorch's grid_sample).
     
@@ -336,6 +337,11 @@ def grid_sample(
         fill_value: Fill value for out-of-bounds samples when
             padding_mode='constant'. Defaults to 0. For integer dtypes in
             nearest mode, the value is clamped to the valid dtype range.
+        rounding_rule: Tie-breaking rule for nearest-neighbor sampling.
+            'bankers' (default) rounds half-integers to the nearest even index,
+            matching PyTorch. 'round_half_up' rounds half-integers toward the
+            larger index, matching volresample.resample(mode='nearest'). This
+            option has no PyTorch equivalent.
         
     Returns:
         Sampled array of shape (N, C, D_out, H_out, W_out).
@@ -343,7 +349,9 @@ def grid_sample(
         For linear mode, returns float32.
         
     Note:
-        The behavior matches PyTorch's grid_sample with align_corners=False.
+        With rounding_rule='bankers', the behavior matches PyTorch's
+        grid_sample with align_corners=False. PyTorch does not expose a
+        configurable nearest-neighbor rounding rule.
         Thread count is controlled globally via volresample.set_num_threads().
         Default is min(cpu_count, 4).
         
@@ -397,6 +405,7 @@ def grid_sample(
     cdef uint8_t fill_u8
     cdef int16_t fill_i16
     cdef int fill_int
+    cdef bint use_round_half_up
     
     # Apply global thread settings
     _apply_thread_settings()
@@ -407,6 +416,13 @@ def grid_sample(
     
     if padding_mode not in ("zeros", "border", "reflection", "constant"):
         raise ValueError(f"Unsupported padding_mode: {padding_mode}")
+
+    if rounding_rule not in ("bankers", "round_half_up"):
+        raise ValueError(
+            f"Unsupported rounding_rule: {rounding_rule}. "
+            "Use 'bankers' or 'round_half_up'."
+        )
+    use_round_half_up = rounding_rule == "round_half_up"
     
     # Treat "zeros" as "constant" with fill_value=0
     if padding_mode == "zeros":
@@ -428,15 +444,17 @@ def grid_sample(
                 with nogil:
                     _grid_sample_nearest_zeros(input_ptr_u8, grid_ptr, output_ptr_u8,
                                              N, C, in_d, in_h, in_w, out_d, out_h, out_w,
-                                             fill_u8)
+                                             fill_u8, use_round_half_up)
             elif padding_mode == "border":
                 with nogil:
                     _grid_sample_nearest_border(input_ptr_u8, grid_ptr, output_ptr_u8,
-                                              N, C, in_d, in_h, in_w, out_d, out_h, out_w)
+                                              N, C, in_d, in_h, in_w, out_d, out_h, out_w,
+                                              use_round_half_up)
             elif padding_mode == "reflection":
                 with nogil:
                     _grid_sample_nearest_reflection(input_ptr_u8, grid_ptr, output_ptr_u8,
-                                                  N, C, in_d, in_h, in_w, out_d, out_h, out_w)
+                                                  N, C, in_d, in_h, in_w, out_d, out_h, out_w,
+                                                  use_round_half_up)
         elif input_np.dtype == np.int16:
             output = np.empty((N, C, out_d, out_h, out_w), dtype=np.int16)
             input_ptr_i16 = <int16_t*>cnp.PyArray_DATA(input_np)
@@ -447,15 +465,17 @@ def grid_sample(
                 with nogil:
                     _grid_sample_nearest_zeros(input_ptr_i16, grid_ptr, output_ptr_i16,
                                              N, C, in_d, in_h, in_w, out_d, out_h, out_w,
-                                             fill_i16)
+                                             fill_i16, use_round_half_up)
             elif padding_mode == "border":
                 with nogil:
                     _grid_sample_nearest_border(input_ptr_i16, grid_ptr, output_ptr_i16,
-                                              N, C, in_d, in_h, in_w, out_d, out_h, out_w)
+                                              N, C, in_d, in_h, in_w, out_d, out_h, out_w,
+                                              use_round_half_up)
             elif padding_mode == "reflection":
                 with nogil:
                     _grid_sample_nearest_reflection(input_ptr_i16, grid_ptr, output_ptr_i16,
-                                                  N, C, in_d, in_h, in_w, out_d, out_h, out_w)
+                                                  N, C, in_d, in_h, in_w, out_d, out_h, out_w,
+                                                  use_round_half_up)
         else:
             input_np = np.ascontiguousarray(input_np, dtype=np.float32)
             output = np.empty((N, C, out_d, out_h, out_w), dtype=np.float32)
@@ -466,15 +486,17 @@ def grid_sample(
                 with nogil:
                     _grid_sample_nearest_zeros(input_ptr, grid_ptr, output_ptr,
                                              N, C, in_d, in_h, in_w, out_d, out_h, out_w,
-                                             fill_f32)
+                                             fill_f32, use_round_half_up)
             elif padding_mode == "border":
                 with nogil:
                     _grid_sample_nearest_border(input_ptr, grid_ptr, output_ptr,
-                                              N, C, in_d, in_h, in_w, out_d, out_h, out_w)
+                                              N, C, in_d, in_h, in_w, out_d, out_h, out_w,
+                                              use_round_half_up)
             elif padding_mode == "reflection":
                 with nogil:
                     _grid_sample_nearest_reflection(input_ptr, grid_ptr, output_ptr,
-                                                  N, C, in_d, in_h, in_w, out_d, out_h, out_w)
+                                                  N, C, in_d, in_h, in_w, out_d, out_h, out_w,
+                                                  use_round_half_up)
     else:  # linear (or bilinear for compatibility)
         output = np.empty((N, C, out_d, out_h, out_w), dtype=np.float32)
         input_ptr = <float*>cnp.PyArray_DATA(input_np)

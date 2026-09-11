@@ -4,6 +4,15 @@ Notable changes in volresample are summarized here by release.
 
 The canonical published artifacts are attached to GitHub Releases and published on PyPI.
 
+## 0.6.0
+
+- Add a `rounding_rule` option to `grid_sample` nearest-neighbor sampling. The
+  default, `"bankers"`, matches PyTorch's ties-to-even behavior;
+  `"round_half_up"` matches `resample(..., mode="nearest")` at half-integer
+  coordinates. PyTorch does not provide this option.
+- Match PyTorch nearest-neighbor grid sampling at reflected half-integer
+  boundaries and float32 coordinates immediately adjacent to a rounding tie.
+
 ## 0.5.1
 
 - Faster cubic interpolation and linear resampling for shallow or tiny volumes.
