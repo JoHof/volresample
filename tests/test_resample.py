@@ -14,6 +14,26 @@ if TORCH_AVAILABLE:
     from torch_reference import TorchReference
 
 
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not available")
+@pytest.mark.parametrize("leading", [(), (2,), (2, 3)])
+@pytest.mark.parametrize("align_corners", [False, True])
+def test_linear_shallow_channels(leading, align_corners):
+    data = np.random.default_rng(27).standard_normal((*leading, 3, 37, 51)).astype(np.float32)
+    size = (1, 63, 79)
+    expected = TorchReference.resample(data, size, mode="linear", align_corners=align_corners)
+    previous = volresample.get_num_threads()
+    try:
+        outputs = []
+        for threads in (1, 4):
+            volresample.set_num_threads(threads)
+            actual = volresample.resample(data, size, mode="linear", align_corners=align_corners)
+            np.testing.assert_allclose(actual, expected, atol=ATOL, rtol=1e-5)
+            outputs.append(actual)
+        np.testing.assert_array_equal(*outputs)
+    finally:
+        volresample.set_num_threads(previous)
+
+
 def _nearest_expected(data: np.ndarray, out_size: tuple[int, int, int]) -> np.ndarray:
     idx_arrays = []
     for in_n, out_n in zip(data.shape, out_size):
@@ -218,9 +238,9 @@ def test_nearest_align_corners_differ_from_default():
     data = rng.randn(7, 7, 7).astype(np.float32)
     out_ac = volresample.resample(data, (11, 11, 11), mode="nearest", align_corners=True)
     out_no = volresample.resample(data, (11, 11, 11), mode="nearest", align_corners=False)
-    assert not np.array_equal(
-        out_ac, out_no
-    ), "Expected different results for align_corners True vs False"
+    assert not np.array_equal(out_ac, out_no), (
+        "Expected different results for align_corners True vs False"
+    )
 
 
 def test_nearest_align_corners_4d():

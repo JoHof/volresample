@@ -3,30 +3,6 @@
 # - grid_mode=True when align_corners=False
 # - grid_mode=False when align_corners=True
 
-from libc.string cimport memcpy
-
-# Prefetch hint
-cdef extern from * nogil:
-    """
-    #if defined(__clang__) || defined(__GNUC__)
-    static inline void volresample_prefetch_read(const void* addr) {
-        __builtin_prefetch(addr, 0, 0);
-    }
-    static inline void volresample_prefetch_write(const void* addr) {
-        __builtin_prefetch(addr, 1, 0);
-    }
-    #else
-    static inline void volresample_prefetch_read(const void* addr) {
-        (void)addr;
-    }
-    static inline void volresample_prefetch_write(const void* addr) {
-        (void)addr;
-    }
-    #endif
-    """
-    void volresample_prefetch_read(const void* addr)
-    void volresample_prefetch_write(const void* addr)
-
 # ---------------------------------------------------------------------------
 # Boundary helper: reflect100 (scipy 'reflect')
 # ---------------------------------------------------------------------------
@@ -60,7 +36,6 @@ cdef inline void _cubic_weights(double t, double* w) noexcept nogil:
 # IIR B-spline prefilter — double precision
 # Uses contiguous temp buffers for strided axes to ensure IIR runs in L1.
 # Gain fused into strided copy-in to avoid a separate pass.
-# Software prefetch for large-stride axis 0.
 # ---------------------------------------------------------------------------
 
 cdef double POLE = -0.2679491924311228  # -2 + sqrt(3)
@@ -72,10 +47,8 @@ cdef inline void _prefilter_1d_inplace(double* data, int size,
     """IIR B-spline prefilter on contiguous stride-1 data, in-place.
     Applies gain internally.  z_n = z^size (precomputed).
     """
-    cdef double z = POLE
     cdef double g = GAIN
     cdef int i
-    cdef double z_i, c0
 
     if size <= 1:
         return
@@ -84,41 +57,22 @@ cdef inline void _prefilter_1d_inplace(double* data, int size,
     for i in range(size):
         data[i] = data[i] * g
 
-    # Causal init (reflect boundary, matching scipy v1.17.1)
-    z_i = z
-    c0 = data[0]
-    data[0] = data[0] + z_n * data[size - 1]
-    for i in range(1, size):
-        data[0] = data[0] + z_i * (data[i] + z_n * data[size - 1 - i])
-        z_i = z_i * z
-    data[0] = data[0] * z / (1.0 - z_n * z_n)
-    data[0] = data[0] + c0
-
-    # Causal recursion
-    for i in range(1, size):
-        data[i] = data[i] + z * data[i - 1]
-
-    # Anticausal init
-    data[size - 1] = data[size - 1] * z / (z - 1.0)
-
-    # Anticausal recursion
-    for i in range(size - 2, -1, -1):
-        data[i] = z * (data[i + 1] - data[i])
+    _prefilter_1d_core_gained(data, size, z_n)
 
 
-cdef void _prefilter_3d(double* data, int d, int h, int w,
+cdef int _prefilter_3d(double* data, int d, int h, int w,
                        int nt) noexcept nogil:
     """Separable cubic B-spline prefilter along all 3 axes.
 
     - Axis 2 (width,  stride=1):   in-place
     - Axis 1 (height, stride=w):   per-thread contiguous temp
-    - Axis 0 (depth,  stride=h*w): per-thread contiguous temp + prefetch
+    - Axis 0 (depth,  stride=h*w): per-thread contiguous temp
     """
     cdef int i, j, k, hw = h * w
     cdef int max_line = d if d > h else h
     cdef double* temps = <double*>malloc(nt * max_line * sizeof(double))
     if temps == NULL:
-        return
+        return 0
     cdef int tid
     cdef double* temp
     cdef double gain_h, gain_d
@@ -167,24 +121,21 @@ cdef void _prefilter_3d(double* data, int d, int h, int w,
             for k in range(h):
                 data[i * hw + j + k * w] = temp[k]
 
-    # --- Axis 0 (depth): stride=h*w, per-thread temp + prefetch ---
+    # --- Axis 0 (depth): stride=h*w, per-thread temp ---
     for i in prange(hw, schedule='static', num_threads=nt):
         tid = omp_get_thread_num()
         temp = &temps[tid * max_line]
-        # Copy strided -> contiguous with gain fused + prefetch
+        # Copy strided -> contiguous with gain fused
         for k in range(d):
-            if k + 8 < d:
-                volresample_prefetch_read(<const void*>&data[(k + 8) * hw + i])
             temp[k] = data[k * hw + i] * gain_d
         # Filter in L1
         _prefilter_1d_core_gained(temp, d, z_n_d)
-        # Copy back with prefetch
+        # Copy back
         for k in range(d):
-            if k + 8 < d:
-                volresample_prefetch_write(<const void*>&data[(k + 8) * hw + i])
             data[k * hw + i] = temp[k]
 
     free(temps)
+    return 1
 
 
 cdef inline void _prefilter_1d_core_gained(double* data, int size,
@@ -254,7 +205,7 @@ cdef void _build_index_lut(int* idx_lut, double* weights, int out_size,
 # ---------------------------------------------------------------------------
 # Main entry: tricubic B-spline resampling
 # ---------------------------------------------------------------------------
-cdef void _resample_cubic(
+cdef int _resample_cubic(
     float* data_ptr,
     float* output_ptr,
     int in_d, int in_h, int in_w,
@@ -262,7 +213,7 @@ cdef void _resample_cubic(
     float scale_d, float scale_h, float scale_w,
     int num_threads,
     bint align_corners
-) noexcept nogil:
+) except -1 nogil:
     cdef int total_in = in_d * in_h * in_w
     cdef int in_hw = in_h * in_w
     cdef int out_hw = out_h * out_w
@@ -270,13 +221,17 @@ cdef void _resample_cubic(
     # --- Stage 1: Copy to double and prefilter ---
     cdef double* coeffs_d = <double*>malloc(total_in * sizeof(double))
     if coeffs_d == NULL:
-        return
+        with gil:
+            raise MemoryError("Unable to allocate cubic coefficients")
 
     cdef int i
     for i in prange(total_in, schedule='static', num_threads=num_threads):
         coeffs_d[i] = <double>data_ptr[i]
 
-    _prefilter_3d(coeffs_d, in_d, in_h, in_w, num_threads)
+    if not _prefilter_3d(coeffs_d, in_d, in_h, in_w, num_threads):
+        free(coeffs_d)
+        with gil:
+            raise MemoryError("Unable to allocate cubic prefilter scratch")
 
     # --- Stage 2: Pre-compute index LUTs and weights ---
     cdef int* d_idx = <int*>malloc(out_d * 4 * sizeof(int))
@@ -286,17 +241,38 @@ cdef void _resample_cubic(
     cdef int* w_idx = <int*>malloc(out_w * 4 * sizeof(int))
     cdef double* w_w  = <double*>malloc(out_w * 4 * sizeof(double))
 
+    # Leave a cache line between workers even when malloc is not aligned.
+    cdef int row_stride = in_w + 8
+    cdef double* rows = NULL
+    if in_w <= 3 * out_w:
+        rows = <double*>malloc(<size_t>num_threads * row_stride * sizeof(double))
+    if (d_idx == NULL or d_w == NULL or h_idx == NULL or h_w == NULL or
+            w_idx == NULL or w_w == NULL or (in_w <= 3 * out_w and rows == NULL)):
+        free(coeffs_d)
+        free(d_idx)
+        free(d_w)
+        free(h_idx)
+        free(h_w)
+        free(w_idx)
+        free(w_w)
+        free(rows)
+        with gil:
+            raise MemoryError("Unable to allocate cubic coordinate tables or row scratch")
+
     _build_index_lut(d_idx, d_w, out_d, in_d, scale_d, align_corners)
     _build_index_lut(h_idx, h_w, out_h, in_h, scale_h, align_corners)
     _build_index_lut(w_idx, w_w, out_w, in_w, scale_w, align_corners)
 
     # --- Stage 3: Pre-compute row offsets ---
-    cdef int* h_row_off = <int*>malloc(out_h * 4 * sizeof(int))
     cdef int oh, tap
     for oh in range(out_h):
         for tap in range(4):
-            h_row_off[oh * 4 + tap] = h_idx[oh * 4 + tap] * in_w
+            h_idx[oh * 4 + tap] *= in_w
 
+    # Collapse depth/height taps into a contiguous row, then interpolate width.
+    # Scratch is private to each worker and reused across output rows.
+    cdef int task
+    cdef double* row
     # --- Stage 4: Evaluate tricubic stencil (double precision) ---
     cdef int od, ow
     cdef int dd, hh
@@ -305,29 +281,43 @@ cdef void _resample_cubic(
     cdef double val
     cdef int od4, oh4, ow4
 
-    for od in prange(out_d, schedule='static', num_threads=num_threads):
-        od4 = od * 4
-        for oh in range(out_h):
-            oh4 = oh * 4
-            for ow in range(out_w):
-                ow4 = ow * 4
-                val = 0.0
+    # Row contraction costs roughly 16*in_w + 4*out_w operations per row,
+    # versus 64*out_w for the direct stencil. Keep the latter for strong
+    # width reduction so we do not compute columns that will never be used.
+    if in_w <= 3 * out_w:
+        for task in prange(out_d * out_h, schedule='static', num_threads=num_threads):
+            od = task / out_h
+            oh = task - od * out_h
+            row = rows + omp_get_thread_num() * row_stride
+            _cubic_evaluate_row(coeffs_d, output_ptr + task * out_w, row,
+                                in_hw, in_w, out_w, d_idx + od * 4, d_w + od * 4,
+                                h_idx + oh * 4, h_w + oh * 4, w_idx, w_w)
+    else:
+        for od in prange(out_d, schedule='static', num_threads=num_threads):
+            od4 = od * 4
+            for oh in range(out_h):
+                oh4 = oh * 4
+                for ow in range(out_w):
+                    ow4 = ow * 4
+                    val = 0.0
 
-                for dd in range(4):
-                    slice_off = d_idx[od4 + dd] * in_hw
-                    wd = d_w[od4 + dd]
+                    for dd in range(4):
+                        slice_off = d_idx[od4 + dd] * in_hw
+                        wd = d_w[od4 + dd]
 
-                    for hh in range(4):
-                        row_off = slice_off + h_row_off[oh4 + hh]
-                        wdh = wd * h_w[oh4 + hh]
+                        for hh in range(4):
+                            row_off = slice_off + h_idx[oh4 + hh]
+                            wdh = wd * h_w[oh4 + hh]
 
-                        val = val + wdh * (
-                            w_w[ow4    ] * coeffs_d[row_off + w_idx[ow4    ]] +
-                            w_w[ow4 + 1] * coeffs_d[row_off + w_idx[ow4 + 1]] +
-                            w_w[ow4 + 2] * coeffs_d[row_off + w_idx[ow4 + 2]] +
-                            w_w[ow4 + 3] * coeffs_d[row_off + w_idx[ow4 + 3]])
+                            val = val + wdh * (
+                                w_w[ow4    ] * coeffs_d[row_off + w_idx[ow4    ]] +
+                                w_w[ow4 + 1] * coeffs_d[row_off + w_idx[ow4 + 1]] +
+                                w_w[ow4 + 2] * coeffs_d[row_off + w_idx[ow4 + 2]] +
+                                w_w[ow4 + 3] * coeffs_d[row_off + w_idx[ow4 + 3]])
 
-                output_ptr[od * out_hw + oh * out_w + ow] = <float>val
+                    output_ptr[od * out_hw + oh * out_w + ow] = <float>val
+
+    free(rows)
 
     # --- Cleanup ---
     free(coeffs_d)
@@ -337,4 +327,30 @@ cdef void _resample_cubic(
     free(h_w)
     free(w_idx)
     free(w_w)
-    free(h_row_off)
+    return 0
+
+
+cdef inline void _cubic_evaluate_row(
+    double* coeffs, float* output, double* row,
+    int in_hw, int in_w, int out_w,
+    int* d_idx, double* d_w, int* h_idx, double* h_w,
+    int* w_idx, double* w_w
+) noexcept nogil:
+    cdef int iw, ow, dd, hh, offset
+    cdef double weight
+    cdef double* source
+    for iw in range(in_w):
+        row[iw] = 0.0
+    for dd in range(4):
+        for hh in range(4):
+            source = coeffs + d_idx[dd] * in_hw + h_idx[hh]
+            weight = d_w[dd] * h_w[hh]
+            for iw in range(in_w):
+                row[iw] = row[iw] + weight * source[iw]
+    for ow in range(out_w):
+        offset = ow * 4
+        output[ow] = <float>(
+            w_w[offset] * row[w_idx[offset]] +
+            w_w[offset + 1] * row[w_idx[offset + 1]] +
+            w_w[offset + 2] * row[w_idx[offset + 2]] +
+            w_w[offset + 3] * row[w_idx[offset + 3]])

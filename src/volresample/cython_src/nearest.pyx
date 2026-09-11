@@ -1,20 +1,5 @@
-from libc.stdlib cimport malloc, free
 from libc.string cimport memcpy
 from numpy cimport uint8_t, int16_t
-
-# Portable software prefetch (read, low temporal locality)
-cdef extern from *:
-    """
-    #if defined(__GNUC__) || defined(__clang__)
-    #define _vol_prefetch_r(addr) __builtin_prefetch((const void*)(addr), 0, 0)
-    #elif defined(_MSC_VER)
-    #include <xmmintrin.h>
-    #define _vol_prefetch_r(addr) _mm_prefetch((const char*)(addr), _MM_HINT_NTA)
-    #else
-    #define _vol_prefetch_r(addr) ((void)0)
-    #endif
-    """
-    void _vol_prefetch_r(const void* addr) nogil
 
 # Define fused type for supported dtypes in nearest neighbor
 ctypedef fused numeric_type:

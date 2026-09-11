@@ -18,7 +18,6 @@ src/volresample/
 ├── _resample.pyx        # Main Cython entry point
 ├── _resample.pyi        # Type stubs for IDE support
 └── cython_src/          # Implementation modules (included at compile time)
-    ├── utils.pyx        # Shared utilities (clip function)
     ├── nearest.pyx      # Nearest neighbor interpolation
     ├── linear.pyx       # Trilinear interpolation
     ├── area.pyx         # Area-based resampling
@@ -31,7 +30,6 @@ src/volresample/
 All `.pyx` files in `cython_src/` are **included** (not imported) into `_resample.pyx`:
 
 ```cython
-include "cython_src/utils.pyx"
 include "cython_src/nearest.pyx"
 include "cython_src/linear.pyx"
 include "cython_src/area.pyx"
@@ -46,6 +44,10 @@ This produces a **single compiled extension** (`_resample.cpython-*.so`). Benefi
 - Single file deployment
 
 Trade-off: Any change requires full recompilation.
+
+These include files are private implementation fragments, not separately built
+Cython modules. They do not need `.pxd` declarations; the old unused headers
+contained signatures that no longer matched the implementation.
 
 ## Thread Configuration
 
@@ -105,7 +107,7 @@ All core loops release the GIL with `nogil`:
 
 ```cython
 with nogil:
-    _resample_linear(data_ptr, output_ptr, ...)
+    _resample_linear_multi(data_ptr, output_ptr, 1, ...)
 ```
 
 This allows OpenMP threads to run in parallel without Python overhead.
@@ -122,7 +124,7 @@ This ensures predictable memory access patterns and enables the raw pointer arit
 
 ### 5. 4D/5D as Batch and Channel Iteration
 
-The `resample()` function supports 3D `(D, H, W)`, 4D `(C, D, H, W)`, and 5D `(N, C, D, H, W)` tensors by iterating over batch and channel dimensions:
+The `resample()` function supports 3D `(D, H, W)`, 4D `(C, D, H, W)`, and 5D `(N, C, D, H, W)` tensors. Linear mode shares coordinate tables across all channels and writes directly into one output allocation. It uses the same kernel for 3D inputs with a channel count of one. Other modes iterate over batch and channel dimensions:
 
 ```cython
 # 5D: iterate over batch and channels
@@ -139,7 +141,7 @@ elif ndim == 4:
         # ... stack results
 ```
 
-This keeps the core resampling functions simple (3D only) while supporting multi-channel and batched data. Each 3D volume is processed independently, allowing for straightforward parallelization within each volume.
+Each non-linear 3D volume is processed independently. Removing repeated channel allocation and stacking for these modes is a possible follow-up experiment.
 
 ### 6. PyTorch Compatibility
 
@@ -157,7 +159,7 @@ For `grid_sample`, normalized coordinates in `[-1, 1]` map to pixel coordinates:
 pixel = ((coord + 1) / 2) * size - 0.5
 ```
 
-For `resample()`, `align_corners=True` is also supported for `linear` and `cubic` modes and is validated against PyTorch/SciPy in the test suite. `nearest` and `area` reject `align_corners=True`, matching the intended API surface.
+For `resample()`, `align_corners=True` is supported for `nearest`, `linear`, and `cubic`. Aligned nearest maps endpoints and rounds to the nearest index; area rejects this option. Tests compare linear and cubic against PyTorch and SciPy respectively.
 
 ### 7. Cubic B-spline Interpolation
 
@@ -165,7 +167,7 @@ The cubic mode implements tricubic B-spline interpolation matching `scipy.ndimag
 
 1. **IIR prefilter**: A separable in-place infinite impulse response filter along each axis converts sample values into B-spline coefficients. This uses causal and anticausal passes with pole `z = sqrt(3) - 2` and reflect (half-sample symmetric) boundary conditions. The initialization formulas match scipy's `_init_causal_reflect` and `_init_anticausal_reflect` from `ni_splines.c`.
 
-2. **Evaluation**: For each output voxel, compute source coordinates, determine the 4×4×4 neighborhood of B-spline coefficients, apply the cubic B-spline basis weights, and accumulate the result.
+2. **Evaluation**: Precompute reflected indices and weights for each axis. Usually, contract the 16 depth/height taps into a contiguous double-precision row, then apply the four width taps. This reuses depth/height work across output columns. Each worker has a scratch row with a cache-line gap between workers. For width reductions greater than 3×, retain the direct 4×4×4 stencil to avoid computing unused input columns. The row path needs about `16*in_w + 4*out_w` weighted contributions per output row, compared with `64*out_w` for the direct stencil.
 
 An identity fast-path skips both stages when the input and output sizes match, returning a copy of the input directly.
 
@@ -180,9 +182,10 @@ for od in prange(out_d, schedule='static', nogil=True):
             # Independent computation for each output voxel
 ```
 
-- **3D resampling**: Parallelizes over output depth
-- **4D/5D resampling**: Each 3D volume (per batch/channel) is processed sequentially in Python, but parallelized over depth within each volume
-- **grid_sample**: Parallelizes over batch × depth (flattened)
+- **Linear**: Parallelizes over channels × output depth, splitting planes into rows when there are too few planes for the configured workers. Small outputs run serially to avoid thread startup and synchronization overhead.
+- **Cubic**: Parallelizes the prefilter over independent lines; evaluation distributes output rows for row contraction, or output depth for the direct stencil.
+- **Nearest/area**: Use their existing depth/run schedules; 4D/5D channels are processed sequentially.
+- **grid_sample**: Parallelizes over batch × channels × output depth (flattened).
 
 Each thread writes to independent output locations, so no synchronization is needed.
 
@@ -221,9 +224,10 @@ Grid coordinates are `(x, y, z)` order matching PyTorch:
 
 ### Padding Modes
 
-Three padding modes handle out-of-bounds coordinates:
+Four padding modes handle out-of-bounds coordinates:
 
 - **zeros**: Return 0 for out-of-bounds samples
+- **constant**: Use `fill_value` for out-of-bounds samples (zeros uses the same kernel)
 - **border**: Clamp to edge values
 - **reflection**: Reflect coordinates at boundaries
 
@@ -287,3 +291,6 @@ assert np.allclose(scipy_output, cython_output, atol=1e-6)
 ```
 
 The `TorchReference` class in `tests/torch_reference.py` provides a consistent interface for PyTorch operations with mode name mapping (e.g., `linear` → `trilinear`).
+
+See [PERFORMANCE.md](PERFORMANCE.md) for isolated build comparisons, measured
+optimization decisions, and follow-up algorithm experiments.

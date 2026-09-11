@@ -205,51 +205,70 @@ Get the current number of threads used for parallel operations.
 
 ## Performance
 
-Benchmarks below were produced by the default curated benchmark profile on an Intel i7-8565U using 4 CPU threads:
+Measured on **2026-09-11** with the current Cython implementation on an
+**Intel Core i5-14600K**, using four physical performance cores (CPU IDs
+`0,2,4,6`). PyTorch and volresample were configured for **4 CPU threads**;
+SciPy's thread count was not configured by the benchmark.
+
+Versions: Python 3.13.7, NumPy 2.4.2, PyTorch
+`2.14.0+rocm7.14` (CPU execution), and SciPy 1.17.1. The extension
+was built with GCC 14.3.0, Cython 3.2.4, and the project's existing AVX2/FMA/OpenMP
+compiler flags.
 
 ```bash
-python tests/benchmark.py --threads 4
+python setup.py build_ext --inplace
+OMP_PROC_BIND=true OMP_PLACES=cores OMP_DYNAMIC=false taskset -c 0,2,4,6 \
+  python tests/benchmark.py --threads 4 --profile default
 ```
 
-The default profile runs for about 30-60 seconds using adaptive repeat counts.
+Timings are **median / IQR in milliseconds**, measured over at least six rotating
+blocks after three warmup calls. The default profile gives each callable at
+least **1,800 ms of measured time**. Calls reuse the input and include NumPy
+input/output conversion and allocation; input generation and output checks are
+outside timing. Speedups use unrounded medians: reference time divided by
+volresample time. Values above 1× favor volresample.
 
 **volresample vs PyTorch**
 
-| Case | Shape | PyTorch | volresample | Speedup | Max error |
-|------|-------|-----------|-------------|---------|-----------|
-| nearest | `128x128x128 -> 64x64x64` | 0.98 ms | 0.41 ms | 2.36× | 0 |
-| nearest (`uint8`) | `128x128x128 -> 64x64x64` | 0.83 ms | 0.27 ms | 3.07× | 0 |
-| nearest (`int16`) | `128x128x128 -> 64x64x64` | 4.20 ms | 0.40 ms | 10.54× | 0 |
-| linear | `128x128x128 -> 64x64x64` | 3.45 ms | 2.33 ms | 1.48× | 0 |
-| linear, `align_corners=True` | `96x96x96 -> 144x144x144` | 23.75 ms | 10.46 ms | 2.27× | `4.50e-05` |
-| area | `160x160x160 -> 80x80x80` | 40.12 ms | 7.20 ms | 5.57× | 0 |
-| 4D linear | `4x96x96x96 -> 64x64x64` | 12.01 ms | 7.50 ms | 1.60× | 0 |
-| 5D linear | `2x4x80x80x80 -> 48x48x48` | 9.76 ms | 8.49 ms | 1.15× | 0 |
+| Case | Shape | PyTorch (ms) | volresample (ms) | Speedup | Max error |
+|------|-------|--------------|------------------|---------|-----------|
+| nearest | `128x128x128 -> 64x64x64` | 0.055 / 0.001 | 0.031 / 0.000 | 1.77× | 0 |
+| nearest (`uint8`) | `128x128x128 -> 64x64x64` | 0.106 / 0.002 | 0.023 / 0.000 | 4.64× | 0 |
+| nearest (`int16`) | `128x128x128 -> 64x64x64` | 0.136 / 0.002 | 0.027 / 0.000 | 4.95× | 0 |
+| nearest, large volume | `512x512x512 -> 256x256x256` | 10.804 / 0.100 | 7.767 / 0.033 | 1.39× | 0 |
+| linear | `128x128x128 -> 64x64x64` | 0.276 / 0.003 | 0.137 / 0.001 | 2.01× | 0 |
+| linear, `align_corners=True` | `96x96x96 -> 144x144x144` | 2.683 / 0.034 | 1.420 / 0.031 | 1.89× | `4.50e-05` |
+| linear, large volume | `512x512x512 -> 256x256x256` | 25.731 / 0.325 | 17.649 / 0.158 | 1.46× | 0 |
+| area | `160x160x160 -> 80x80x80` | 4.179 / 0.114 | 0.733 / 0.038 | 5.70× | `1.19e-07` |
+| area, large volume | `512x512x512 -> 64x64x64` | 52.356 / 0.506 | 12.433 / 0.221 | 4.21× | `2.24e-07` |
+| 4D linear | `4x96x96x96 -> 64x64x64` | 1.004 / 0.009 | 0.517 / 0.007 | 1.94× | 0 |
+| 5D linear | `2x4x80x80x80 -> 48x48x48` | 0.878 / 0.012 | 0.444 / 0.007 | 1.98× | 0 |
 
 **volresample vs SciPy**
 
-| Case | Shape | SciPy | volresample | Speedup | Max error |
-|------|-------|-------|-------------|---------|-----------|
-| cubic, `align_corners=False` | `128x128x128 -> 64x64x64` | 266.29 ms | 63.68 ms | 4.18× | `8.34e-07` |
-| cubic, `align_corners=True` | `96x128x80 -> 64x160x48` | 403.68 ms | 46.23 ms | 8.73× | `1.43e-06` |
+| Case | Shape | SciPy (ms) | volresample (ms) | Speedup | Max error |
+|------|-------|--------------|------------------|---------|-----------|
+| cubic, `align_corners=False` | `128x128x128 -> 64x64x64` | 77.631 / 1.138 | 10.995 / 1.059 | 7.06× | 0 |
+| cubic, `align_corners=True` | `96x128x80 -> 64x160x48` | 80.826 / 0.555 | 4.465 / 1.062 | 18.10× | 0 |
 
 **volresample vs PyTorch (`grid_sample`)**
 
-| Case | Shape | PyTorch | volresample | Speedup | Max error |
-|------|-------|-----------|-------------|---------|-----------|
-| linear, zeros | `1x2x96x96x96 -> 80x80x80` | 129.57 ms | 41.63 ms | 3.11× | `4.40e-05` |
-| nearest, zeros | `1x2x96x96x96 -> 80x80x80` | 14.23 ms | 4.47 ms | 3.18× | 0 |
-| linear, reflection | `1x2x80x96x64 -> 72x88x56` | 91.12 ms | 19.75 ms | 4.61× | `5.42e-05` |
+| Case | Shape | PyTorch (ms) | volresample (ms) | Speedup | Max error |
+|------|-------|--------------|------------------|---------|-----------|
+| linear, zeros | `1x2x96x96x96 -> 80x80x80` | 11.930 / 0.287 | 4.376 / 0.215 | 2.73× | `4.40e-05` |
+| nearest, zeros | `1x2x96x96x96 -> 80x80x80` | 3.697 / 0.100 | 0.777 / 0.025 | 4.76× | 0 |
+| linear, reflection | `1x2x80x96x64 -> 72x88x56` | 16.535 / 0.377 | 3.462 / 0.061 | 4.78× | `5.42e-05` |
 
-Average speedup across the default benchmark suite: **3.99×**.
+Arithmetic mean speedup across these 16 cases: **4.34×**.
+This summary depends on the selected workloads.
 
 **Notes:**
 
-- **Cubic mode** is validated against SciPy rather than PyTorch. The `align_corners` flag selects between SciPy's `grid_mode=True` and `grid_mode=False`, and both paths are benchmarked above.
-- **`int16` nearest** shows the largest speedup because PyTorch must round-trip through `float32`, while volresample operates directly on `int16`.
-- **Area mode** remains one of the strongest CPU wins because the implementation parallelizes efficiently over spatial work.
-- **4D and 5D coverage** is included in the benchmark suite so multi-channel and batched paths are represented, even when the raw speedups are smaller than the single-volume cases.
-- **These are machine-specific measurements.** CPU architecture, memory bandwidth, thermal throttling, and installed library versions can shift the absolute numbers substantially.
+- Cubic timings include spline prefiltering for both implementations. The two rows cover both `align_corners` settings.
+- For `int16` nearest, the PyTorch reference converts to `float32` and back; volresample operates directly on `int16`.
+- Supplemental prepared-tensor PyTorch timings printed by the benchmark exclude input wrapping/casts and output conversion. They are not used in these tables or the speedup summary.
+- Max error is the maximum absolute difference from the reference output. Floating-point interpolation can differ slightly because of rounding and operation order.
+- These are CPU measurements on this machine. Core selection, memory bandwidth, thermal conditions, library versions, and workload shape affect performance.
 
 ## Development
 
@@ -271,7 +290,7 @@ pytest tests/ --skip-torch
 ### Running Benchmarks
 
 ```bash
-# Curated default run: all modes plus grid_sample, roughly 30-60 seconds
+# Curated default run: all modes plus grid_sample
 python tests/benchmark.py
 
 # Faster smoke benchmark
@@ -283,6 +302,24 @@ python tests/benchmark.py --threads 4
 # Output is printed live while the benchmark runs
 python -u tests/benchmark.py
 ```
+
+The main tables measure end-to-end CPU calls from NumPy input to NumPy output.
+Times are median / IQR of per-call averages from at least six measurement blocks,
+with three warmup calls and rotating backend order. Each callable receives the
+profile's measured time budget (or `--target-ms`); total runtime also includes
+warmup and output validation.
+
+Supplemental PyTorch tables time `F.interpolate` / `F.grid_sample` with prepared
+CPU tensors. They include dispatch and output allocation, but exclude input
+wrapping, dtype conversion, and output conversion, and do not enter speedup
+summaries. For int16 nearest, the end-to-end PyTorch path includes conversion to
+float32 and back; its prepared timing uses float32 tensors. Cubic SciPy timings
+include spline prefiltering and return float32 directly. `--threads` configures
+PyTorch and volresample; it does not configure SciPy.
+
+For Cython changes, `python -m tests.experiment` builds isolated source snapshots
+and compares them in the same process with correctness gates, repeated rounds,
+and JSON results. Run `python -m tests.experiment --help` for available commands.
 
 ### Building from Source
 
