@@ -4,6 +4,11 @@ Notable changes in volresample are summarized here by release.
 
 The canonical published artifacts are attached to GitHub Releases and published on PyPI.
 
+## 0.6.1
+
+- Fix cubic B-spline prefilter initialization at reflect boundaries to match
+  SciPy 1.18+, correcting interpolation errors on short axes.
+
 ## 0.6.0
 
 - Add a `rounding_rule` option to `grid_sample` nearest-neighbor sampling. The

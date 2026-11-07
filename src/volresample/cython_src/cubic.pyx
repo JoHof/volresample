@@ -145,20 +145,19 @@ cdef inline void _prefilter_1d_core_gained(double* data, int size,
     """
     cdef double z = POLE
     cdef int i
-    cdef double z_i, c0
+    cdef double z_i, causal_sum
 
     if size <= 1:
         return
 
-    # Causal init (reflect boundary, matching scipy v1.17.1)
+    # Causal init (reflect boundary, matching scipy >= 1.18).
+    # Keep data[0] unchanged: the final summand reads it again.
     z_i = z
-    c0 = data[0]
-    data[0] = data[0] + z_n * data[size - 1]
+    causal_sum = data[0] + z_n * data[size - 1]
     for i in range(1, size):
-        data[0] = data[0] + z_i * (data[i] + z_n * data[size - 1 - i])
+        causal_sum = causal_sum + z_i * (data[i] + z_n * data[size - 1 - i])
         z_i = z_i * z
-    data[0] = data[0] * z / (1.0 - z_n * z_n)
-    data[0] = data[0] + c0
+    data[0] = data[0] + causal_sum * z / (1.0 - z_n * z_n)
 
     # Causal recursion
     for i in range(1, size):
