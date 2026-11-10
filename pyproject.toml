@@ -30,25 +30,9 @@ classifiers = [
 
 [tool.uv.dependency-groups]
 dev = { requires-python = ">=3.13" }
-
-[project.optional-dependencies]
-# Select exactly one PyTorch build when syncing, for example: `uv sync --extra cpu`
-# or `uv sync --extra rocm`.
-cpu = ["torch>=2.0.0"]
-cuda = [
-    "torch>=2.0.0; (sys_platform == 'linux' or sys_platform == 'win32')",
-]
-rocm = [
-    # Declare Pillow directly so uv applies its PyPI source to torchvision's dependency.
-    "pillow; sys_platform == 'linux' and python_version >= '3.13'",
-    # AMD wheels ship GPU kernels separately; gfx1200 targets the RX 9060 XT.
-    "torch[device-gfx1200]==2.14.0+rocm10.1.0; sys_platform == 'linux' and python_version >= '3.13'",
-    "torchvision[device-gfx1200]==0.29.0a0+rocm10.1.0; sys_platform == 'linux' and python_version >= '3.13'",
-    # Explicitly allow the matching prerelease device wheel.
-    "amd-torchvision-device-gfx1200==0.29.0a0+rocm10.1.0; sys_platform == 'linux' and python_version >= '3.13'",
-    "rocm[device-gfx1200]; sys_platform == 'linux' and python_version >= '3.13'",
-    "torchaudio>=2.0.0; sys_platform == 'linux' and python_version >= '3.13'",
-]
+cpu = { requires-python = ">=3.13" }
+cuda = { requires-python = ">=3.13" }
+rocm = { requires-python = ">=3.13" }
 
 [project.urls]
 Homepage = "https://github.com/JoHof/volresample"
@@ -135,9 +119,9 @@ default-groups = ["dev"]
 index-strategy = "unsafe-best-match"
 conflicts = [
     [
-        { extra = "cpu" },
-        { extra = "cuda" },
-        { extra = "rocm" },
+        { group = "cpu" },
+        { group = "cuda" },
+        { group = "rocm" },
     ],
 ]
 
@@ -146,11 +130,11 @@ conflicts = [
 numpy = { index = "pypi" }
 pillow = { index = "pypi" }
 torch = [
-    { index = "pytorch-cpu", extra = "cpu" },
-    { index = "pytorch-cu130", extra = "cuda" },
-    { index = "pytorch-rocm", extra = "rocm" },
+    { index = "pytorch-cpu", group = "cpu" },
+    { index = "pytorch-cu130", group = "cuda" },
+    { index = "pytorch-rocm", group = "rocm" },
 ]
-torchvision = { index = "pytorch-rocm", extra = "rocm" }
+torchvision = { index = "pytorch-rocm", group = "rocm" }
 
 [[tool.uv.index]]
 name = "pytorch-cpu"
@@ -174,6 +158,24 @@ url = "https://pypi.org/simple"
 default = true
 
 [dependency-groups]
+# Select one development-only PyTorch build: `uv sync --group cpu`,
+# `uv sync --group cuda`, or `uv sync --group rocm`.
+cpu = ["torch"]
+cuda = [
+    "torch; (sys_platform == 'linux' or sys_platform == 'win32')",
+]
+rocm = [
+    # Declare Pillow directly so uv applies its PyPI source to torchvision's dependency.
+    "pillow; sys_platform == 'linux' and python_version >= '3.13'",
+    # AMD wheels ship GPU kernels separately; gfx1200 targets the RX 9060 XT.
+    "torch[device-gfx1200]==2.14.0+rocm10.1.0; sys_platform == 'linux' and python_version >= '3.13'",
+    "torchvision[device-gfx1200]==0.29.0a0+rocm10.1.0; sys_platform == 'linux' and python_version >= '3.13'",
+    # Explicitly allow the matching prerelease device wheel.
+    "amd-torchvision-device-gfx1200==0.29.0a0+rocm10.1.0; sys_platform == 'linux' and python_version >= '3.13'",
+    "rocm[device-gfx1200]; sys_platform == 'linux' and python_version >= '3.13'",
+    "torchaudio; sys_platform == 'linux' and python_version >= '3.13'",
+]
+
 dev = [
     "cibuildwheel; python_version >= '3.13'",
     "pytest",
@@ -187,7 +189,6 @@ dev = [
     "cython",
     "ipywidgets",
     "scipy",
-    "torch",
 ]
 
 [tool.setuptools]

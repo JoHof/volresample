@@ -278,15 +278,25 @@ This summary depends on the selected workloads.
 
 ## Development
 
+Development requires Python 3.13 or newer. Install the shared tools with `uv sync`.
+For PyTorch tests and benchmarks, select one backend:
+
+```bash
+uv sync --group cpu
+uv sync --group cuda
+uv sync --group rocm  # Linux, AMD gfx1200 (RX 9060 XT)
+```
+
+These groups are mutually exclusive and are only used for development; the library continues to support Python 3.9 and newer.
+
 ### Running Tests
 
 ```bash
 # Run all tests
 pytest tests/
 
-# Run with PyTorch comparison tests
-pip install torch
-pytest tests/ -v
+# Run with PyTorch comparison tests (use your selected backend)
+uv run --group cpu pytest tests/ -v
 
 # Skip PyTorch tests
 pytest tests/ --skip-torch
